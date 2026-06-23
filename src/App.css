@@ -1,0 +1,18 @@
+/* App specific styles can go here, but most are in index.css or modular CSS */
+.app-container {
+  width: 100vw;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background-image: 
+    radial-gradient(circle at 15% 50%, rgba(44, 214, 124, 0.05), transparent 25%),
+    radial-gradient(circle at 85% 30%, rgba(66, 135, 245, 0.05), transparent 25%);
+}
+
+.main-content {
+  flex: 1;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 2rem;
+}

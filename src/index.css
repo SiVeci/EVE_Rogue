@@ -1,0 +1,118 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Orbitron:wght@400;500;700&display=swap');
+
+:root {
+  /* Core Colors */
+  --color-bg-space: #07090f;
+  --color-bg-panel: rgba(16, 22, 38, 0.65);
+  --color-bg-panel-hover: rgba(25, 35, 60, 0.75);
+  --color-border: rgba(90, 150, 255, 0.2);
+  --color-border-glow: rgba(90, 150, 255, 0.5);
+  
+  /* Text Colors */
+  --color-text-main: #e0e6ed;
+  --color-text-muted: #8b9bb4;
+  --color-text-highlight: #4deeea;
+  
+  /* Faction / Damage Colors */
+  --color-shield: #4deeea;    /* Caldari / EM/Thermal Defense */
+  --color-armor: #e8a838;     /* Amarr / Kinetic/Explosive Defense */
+  --color-hull: #a5a5a5;      /* Structure */
+  --color-gallente: #2cd67c;  /* Gallente Green */
+  --color-caldari: #4287f5;   /* Caldari Blue */
+  
+  /* Typography */
+  --font-main: 'Inter', sans-serif;
+  --font-display: 'Orbitron', sans-serif; /* For headers and numbers */
+  
+  /* Metrics */
+  --border-radius: 4px;
+  --transition-fast: 0.15s ease;
+  --transition-smooth: 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-main);
+  background-color: var(--color-bg-space);
+  color: var(--color-text-main);
+  overflow: hidden; /* Prevent scrolling in a game */
+  user-select: none; /* Prevent text selection */
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Glassmorphism Panel Utility */
+.glass-panel {
+  background: var(--color-bg-panel);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--color-border);
+  border-radius: var(--border-radius);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+  position: relative;
+  overflow: hidden;
+}
+
+.glass-panel::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--color-border-glow), transparent);
+  opacity: 0.5;
+}
+
+/* Common UI Elements */
+h1, h2, h3, h4 {
+  font-family: var(--font-display);
+  font-weight: 500;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+}
+
+button {
+  cursor: pointer;
+  font-family: var(--font-display);
+  background: rgba(90, 150, 255, 0.1);
+  border: 1px solid var(--color-border);
+  color: var(--color-text-highlight);
+  padding: 8px 16px;
+  border-radius: var(--border-radius);
+  transition: var(--transition-fast);
+  text-transform: uppercase;
+  font-size: 0.85rem;
+  letter-spacing: 1px;
+}
+
+button:hover {
+  background: rgba(90, 150, 255, 0.2);
+  border-color: var(--color-text-highlight);
+  box-shadow: 0 0 10px rgba(77, 238, 234, 0.3);
+}
+
+button:active {
+  transform: translateY(1px);
+}
+
+/* Custom Scrollbar for Inventory/Lists */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.3);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-border-glow);
+}
