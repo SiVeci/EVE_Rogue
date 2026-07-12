@@ -27,7 +27,8 @@ export const SHIPS = {
     },
     mobility: {
       mass: 1100000,
-      base_speed: 315 // m/s
+      base_speed: 315, // m/s
+      agility: 3.0 // seconds to reach ~63% of max velocity
     },
     drone_bandwidth: 5,
     drone_bay: 5
@@ -59,7 +60,8 @@ export const SHIPS = {
     },
     mobility: {
       mass: 1150000,
-      base_speed: 305
+      base_speed: 305,
+      agility: 3.5
     },
     drone_bandwidth: 0,
     drone_bay: 0

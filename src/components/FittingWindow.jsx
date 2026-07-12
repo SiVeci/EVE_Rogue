@@ -1,17 +1,22 @@
 import React from 'react';
-import { useGameStore } from '../store/gameStore';
+import { useGameStore, skillMult } from '../store/gameStore';
 import './FittingWindow.css';
 
 export default function FittingWindow() {
-  const { activeShip, inventory, fitModule, unfitModule } = useGameStore();
+  const { activeShip, inventory, skills, fitModule, unfitModule } = useGameStore();
 
   const currentPG = activeShip.fittedModules.high.concat(activeShip.fittedModules.mid, activeShip.fittedModules.low)
     .reduce((acc, m) => acc + (m.cost.pg || 0), 0);
   const currentCPU = activeShip.fittedModules.high.concat(activeShip.fittedModules.mid, activeShip.fittedModules.low)
     .reduce((acc, m) => acc + (m.cost.cpu || 0), 0);
 
-  const pgPercent = Math.min(100, (currentPG / activeShip.resources.pg) * 100);
-  const cpuPercent = Math.min(100, (currentCPU / activeShip.resources.cpu) * 100);
+  // Effective capacity includes the Engineering skill bonus (matches fitModule's check)
+  const engMult = skillMult(skills.engineering);
+  const effectivePG = Math.floor(activeShip.resources.pg * engMult);
+  const effectiveCPU = Math.floor(activeShip.resources.cpu * engMult);
+
+  const pgPercent = Math.min(100, (currentPG / effectivePG) * 100);
+  const cpuPercent = Math.min(100, (currentCPU / effectiveCPU) * 100);
 
   // Helper to generate positions for slots around a circle
   // EVE style: High slots top-right (270 to 360/0 deg), Mid slots right (0 to 90 deg), Low slots bottom (90 to 180 deg)
@@ -114,7 +119,7 @@ export default function FittingWindow() {
           <h3>Fitting <span>PG / CPU</span></h3>
           <div className="stat-row">
             <span>Powergrid</span>
-            <span className="stat-val" style={{ color: pgPercent > 100 ? 'red' : '#fff' }}>{currentPG} / {activeShip.resources.pg} MW</span>
+            <span className="stat-val" style={{ color: pgPercent > 100 ? 'red' : '#fff' }}>{currentPG} / {effectivePG} MW</span>
           </div>
           <div style={{ height: '4px', background: 'rgba(255,255,255,0.1)', marginBottom: '8px' }}>
             <div style={{ height: '100%', width: `${pgPercent}%`, background: pgPercent > 100 ? 'red' : 'var(--color-gallente)' }} />
@@ -122,7 +127,7 @@ export default function FittingWindow() {
 
           <div className="stat-row">
             <span>CPU</span>
-            <span className="stat-val" style={{ color: cpuPercent > 100 ? 'red' : '#fff' }}>{currentCPU} / {activeShip.resources.cpu} tf</span>
+            <span className="stat-val" style={{ color: cpuPercent > 100 ? 'red' : '#fff' }}>{currentCPU} / {effectiveCPU} tf</span>
           </div>
           <div style={{ height: '4px', background: 'rgba(255,255,255,0.1)', marginBottom: '8px' }}>
             <div style={{ height: '100%', width: `${cpuPercent}%`, background: cpuPercent > 100 ? 'red' : 'var(--color-shield)' }} />

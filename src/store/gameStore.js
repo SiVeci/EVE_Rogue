@@ -2,6 +2,9 @@ import { create } from 'zustand';
 import { SHIPS } from '../data/ships';
 import { MODULES } from '../data/modules';
 
+// Skill bonus multiplier: level 1 is baseline, each level past 1 grants +5%
+export const skillMult = (level) => 1 + 0.05 * (Math.max(1, level) - 1);
+
 export const useGameStore = create((set, get) => ({
   // Player state
   isk: 50000,
@@ -43,13 +46,30 @@ export const useGameStore = create((set, get) => ({
   advanceDepth: () => set(state => ({ deadspaceDepth: state.deadspaceDepth + 1 })),
   trainSkill: (skillName, cost) => set(state => {
     if (state.sp >= cost) {
-      return { 
-        sp: state.sp - cost, 
+      return {
+        sp: state.sp - cost,
         skills: { ...state.skills, [skillName]: state.skills[skillName] + 1 }
       };
     }
     return state;
   }),
+  manufacture: (blueprint) => set(state => {
+    const product = MODULES[blueprint.produces];
+    if (!product || state.isk < blueprint.cost) return state;
+    return {
+      isk: state.isk - blueprint.cost,
+      inventory: [...state.inventory, product]
+    };
+  }),
+  // Ship blown up in deadspace: fitted modules are lost, run resets to depth 1.
+  // Hangar inventory and ISK survive with the pod.
+  shipDestroyed: () => set(state => ({
+    deadspaceDepth: 1,
+    activeShip: {
+      ...state.activeShip,
+      fittedModules: { high: [], mid: [], low: [] }
+    }
+  })),
   fitModule: (module, targetSlot) => set((state) => {
     // Validate slot type
     if (module.slot !== targetSlot) return state;
@@ -60,14 +80,15 @@ export const useGameStore = create((set, get) => ({
       return state; // No empty slots
     }
 
-    // Check PG and CPU constraints (basic check without skills)
+    // Check PG and CPU constraints (Engineering skill raises effective capacity)
+    const engMult = skillMult(state.skills.engineering);
     const currentPG = ship.fittedModules.high.concat(ship.fittedModules.mid, ship.fittedModules.low)
       .reduce((acc, m) => acc + (m.cost.pg || 0), 0);
     const currentCPU = ship.fittedModules.high.concat(ship.fittedModules.mid, ship.fittedModules.low)
       .reduce((acc, m) => acc + (m.cost.cpu || 0), 0);
 
-    if (currentPG + (module.cost.pg || 0) > ship.resources.pg || 
-        currentCPU + (module.cost.cpu || 0) > ship.resources.cpu) {
+    if (currentPG + (module.cost.pg || 0) > ship.resources.pg * engMult ||
+        currentCPU + (module.cost.cpu || 0) > ship.resources.cpu * engMult) {
       alert("Not enough Powergrid or CPU!");
       return state;
     }

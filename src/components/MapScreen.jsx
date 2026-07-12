@@ -1,38 +1,48 @@
 import React from 'react';
 import { useGameStore } from '../store/gameStore';
+import { getEncounter } from '../data/npcs';
 
 export default function MapScreen({ onEnterNode, onDock }) {
   const { deadspaceDepth } = useGameStore();
 
+  const patrol = getEncounter(deadspaceDepth, 'patrol');
+  const elite = getEncounter(deadspaceDepth, 'elite');
+  const strengthPct = Math.round((1 + 0.15 * (deadspaceDepth - 1)) * 100 - 100);
+
   return (
     <div className="panel" style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
       <h1 style={{ color: '#fff', fontSize: '2rem', marginBottom: '1rem' }}>Abyssal Deadspace</h1>
-      <p style={{ color: '#ff4a4a', fontSize: '1.2rem', marginBottom: '3rem' }}>Depth Level: {deadspaceDepth}</p>
-      
+      <p style={{ color: '#ff4a4a', fontSize: '1.2rem', marginBottom: '0.5rem' }}>Depth Level: {deadspaceDepth}</p>
+      <p style={{ color: 'var(--color-text-muted)', fontSize: '0.85rem', marginBottom: '3rem' }}>
+        Local hostiles: {strengthPct > 0 ? `+${strengthPct}% stronger` : 'baseline strength'}
+      </p>
+
       <div style={{ display: 'flex', gap: '3rem' }}>
-        <div 
-          onClick={onEnterNode}
-          style={{ 
-            width: '200px', height: '200px', 
-            borderRadius: '50%', border: '2px solid rgba(90,150,255,0.8)', 
+        <div
+          onClick={() => onEnterNode('patrol')}
+          style={{
+            width: '200px', height: '200px',
+            borderRadius: '50%', border: '2px solid rgba(90,150,255,0.8)',
             display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
             cursor: 'pointer', background: 'radial-gradient(circle, rgba(90,150,255,0.2), transparent)',
             boxShadow: '0 0 30px rgba(90,150,255,0.2)'
           }}>
           <h2 style={{ color: '#fff' }}>Acceleration Gate</h2>
           <p style={{ color: 'var(--color-text-muted)', fontSize: '0.8rem', marginTop: '0.5rem' }}>Guristas Patrol</p>
+          <p style={{ color: 'var(--color-gallente)', fontSize: '0.75rem', marginTop: '0.5rem' }}>Bounty: {patrol.reward.toLocaleString()} ISK</p>
         </div>
 
-        <div 
-          onClick={onEnterNode}
-          style={{ 
-            width: '200px', height: '200px', 
-            borderRadius: '50%', border: '2px dashed rgba(255,74,74,0.8)', 
+        <div
+          onClick={() => onEnterNode('elite')}
+          style={{
+            width: '200px', height: '200px',
+            borderRadius: '50%', border: '2px dashed rgba(255,74,74,0.8)',
             display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
             cursor: 'pointer', background: 'radial-gradient(circle, rgba(255,74,74,0.1), transparent)'
           }}>
           <h2 style={{ color: '#ff4a4a' }}>Smuggler Stargate</h2>
           <p style={{ color: 'var(--color-text-muted)', fontSize: '0.8rem', marginTop: '0.5rem' }}>Elite Enemy / High Loot</p>
+          <p style={{ color: 'var(--color-gallente)', fontSize: '0.75rem', marginTop: '0.5rem' }}>Bounty: {elite.reward.toLocaleString()} ISK</p>
         </div>
       </div>
 

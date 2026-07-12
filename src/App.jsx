@@ -7,6 +7,7 @@ import { useGameStore } from './store/gameStore'
 
 function App() {
   const [view, setView] = useState('station'); // 'station' | 'map' | 'space'
+  const [nodeType, setNodeType] = useState('patrol'); // 'patrol' | 'elite'
   const { isk } = useGameStore();
 
   return (
@@ -26,8 +27,8 @@ function App() {
       
       <main className="main-content" style={{ padding: view === 'space' ? 0 : '2rem' }}>
         {view === 'station' && <StationHub />}
-        {view === 'map' && <MapScreen onEnterNode={() => setView('space')} onDock={() => setView('station')} />}
-        {view === 'space' && <BattleScene onVictory={() => setView('map')} />}
+        {view === 'map' && <MapScreen onEnterNode={(type) => { setNodeType(type); setView('space'); }} onDock={() => setView('station')} />}
+        {view === 'space' && <BattleScene nodeType={nodeType} onVictory={() => setView('map')} onDefeat={() => setView('station')} />}
       </main>
     </div>
   )
