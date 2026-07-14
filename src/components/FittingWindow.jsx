@@ -1,30 +1,63 @@
-import React from 'react';
-import { useGameStore, skillMult } from '../store/gameStore';
+import React, { useMemo } from 'react';
+import { useGameStore } from '../store/gameStore';
+import { getEffectiveStats } from '../lib/shipStats';
+import { meetsRequiredSkills, describeRequiredSkills } from '../data/skills';
+import { SHIPS } from '../data/ships';
 import './FittingWindow.css';
 
 export default function FittingWindow() {
-  const { activeShip, inventory, skills, fitModule, unfitModule } = useGameStore();
+  const { activeShip, inventory, skills, ownedShips, fitModule, unfitModule, switchShip } = useGameStore();
 
-  const currentPG = activeShip.fittedModules.high.concat(activeShip.fittedModules.mid, activeShip.fittedModules.low)
-    .reduce((acc, m) => acc + (m.cost.pg || 0), 0);
-  const currentCPU = activeShip.fittedModules.high.concat(activeShip.fittedModules.mid, activeShip.fittedModules.low)
-    .reduce((acc, m) => acc + (m.cost.cpu || 0), 0);
+  // Single source of truth for stats: this is the same function fitModule's
+  // validation and BattleScene's combat init use, so what's shown here is
+  // exactly what governs fitting checks and the fight.
+  const eff = useMemo(
+    () => (activeShip ? getEffectiveStats(activeShip, activeShip.fittedModules, skills) : null),
+    [activeShip, skills]
+  );
 
-  // Effective capacity includes the Engineering skill bonus (matches fitModule's check)
-  const engMult = skillMult(skills.engineering);
-  const effectivePG = Math.floor(activeShip.resources.pg * engMult);
-  const effectiveCPU = Math.floor(activeShip.resources.cpu * engMult);
+  const distinctOwned = [...new Set(ownedShips)];
 
-  const pgPercent = Math.min(100, (currentPG / effectivePG) * 100);
-  const cpuPercent = Math.min(100, (currentCPU / effectiveCPU) * 100);
+  // Podded: no hull to fit — offer boarding or point to the market
+  if (!activeShip) {
+    return (
+      <div className="panel" style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: '1rem' }}>
+        <h2 style={{ color: '#ff4a4a' }}>NO ACTIVE SHIP</h2>
+        <p style={{ color: 'var(--color-text-muted)', maxWidth: '400px', textAlign: 'center' }}>
+          Your ship was lost in the abyss. Board a hull from your hangar, or buy a new one on the MARKET tab.
+        </p>
+        {distinctOwned.map((id) => {
+          const ship = SHIPS[id];
+          const locked = !meetsRequiredSkills(ship.requiredSkills, skills);
+          return (
+            <button key={id} onClick={() => switchShip(id)} style={locked ? { color: '#ff4a4a' } : undefined} title={locked ? `Requires ${describeRequiredSkills(ship.requiredSkills)}` : undefined}>
+              Board {ship.name}{locked && ' (locked)'}
+            </button>
+          );
+        })}
+      </div>
+    );
+  }
+
+  // Display floored, gate (in gameStore.fitModule) unfloored — matches the
+  // previous engineering-multiplier rounding behavior.
+  const effectivePG = Math.floor(eff.resources.pg);
+  const effectiveCPU = Math.floor(eff.resources.cpu);
+  const pgPercent = Math.min(100, (eff.used.pg / effectivePG) * 100);
+  const cpuPercent = Math.min(100, (eff.used.cpu / effectiveCPU) * 100);
+  const fmtResist = (layer) => `${Math.round(layer.em)}/${Math.round(layer.th)}/${Math.round(layer.kin)}/${Math.round(layer.exp)}`;
 
   // Helper to generate positions for slots around a circle
   // EVE style: High slots top-right (270 to 360/0 deg), Mid slots right (0 to 90 deg), Low slots bottom (90 to 180 deg)
   const getSlotStyle = (type, index, totalSlots) => {
     let startAngle, endAngle;
     if (type === 'high') {
-      startAngle = -80;
-      endAngle = -10;
+      // Widened from the original 70deg span (-80/-10) to fit Catalyst's 8
+      // high slots without adjacent slot circles overlapping: at 250px
+      // radius, 90deg / 7 gaps is a ~56px arc between slot centers, safely
+      // clear of the 48px slot diameter.
+      startAngle = -95;
+      endAngle = -5;
     } else if (type === 'mid') {
       startAngle = 10;
       endAngle = 80;
@@ -85,20 +118,48 @@ export default function FittingWindow() {
         <h3 style={{ color: '#fff', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '0.5rem' }}>STATION HANGAR</h3>
         <div className="inventory-list" style={{ overflowY: 'auto', flex: 1 }}>
           {inventory.length === 0 && <p style={{ color: 'var(--color-text-muted)', fontSize: '0.8rem' }}>Hangar is empty.</p>}
-          {inventory.map((module, idx) => (
-            <div key={idx} className="inventory-item" onClick={() => fitModule(module, module.slot)}>
-              <span className="item-tier">{module.tier}</span>
-              <div className="item-details">
-                <span className="item-name">{module.name}</span>
-                <span className="item-desc">{module.slot.toUpperCase()} SLOT</span>
+          {inventory.map((module, idx) => {
+            const locked = !meetsRequiredSkills(module.requiredSkills, skills);
+            return (
+              <div key={idx} className="inventory-item" onClick={() => fitModule(module, module.slot)} style={locked ? { opacity: 0.6 } : undefined}>
+                <span className="item-tier">{module.tier}</span>
+                <div className="item-details">
+                  <span className="item-name">{module.name}</span>
+                  <span className="item-desc">
+                    {module.slot.toUpperCase()} SLOT
+                    {locked && <span style={{ color: '#ff4a4a' }}> · requires {describeRequiredSkills(module.requiredSkills)}</span>}
+                  </span>
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 
       {/* CENTER: CIRCULAR SHIP VIEW */}
       <div className="fw-center panel">
+        {/* Owned-hull switcher: boarding another hull strips the current fit back to the hangar */}
+        <div style={{ position: 'absolute', top: '1rem', left: 0, right: 0, display: 'flex', justifyContent: 'center', gap: '0.5rem', zIndex: 2 }}>
+          {distinctOwned.map((id) => {
+            const ship = SHIPS[id];
+            const isActive = activeShip.id === id;
+            const locked = !meetsRequiredSkills(ship.requiredSkills, skills);
+            const count = ownedShips.filter((s) => s === id).length;
+            return (
+              <button
+                key={id}
+                onClick={() => switchShip(id)}
+                title={locked ? `Requires ${describeRequiredSkills(ship.requiredSkills)}` : undefined}
+                style={{
+                  background: isActive ? 'rgba(90,150,255,0.2)' : 'transparent',
+                  color: locked ? '#ff4a4a' : (isActive ? '#fff' : '#888'),
+                  fontSize: '0.75rem'
+                }}>
+                {ship.name}{count > 1 ? ` ×${count}` : ''}
+              </button>
+            );
+          })}
+        </div>
         <div className="ship-fitting-circle">
           <div className="center-ship-info">
             <h2>{activeShip.name}</h2>
@@ -119,7 +180,7 @@ export default function FittingWindow() {
           <h3>Fitting <span>PG / CPU</span></h3>
           <div className="stat-row">
             <span>Powergrid</span>
-            <span className="stat-val" style={{ color: pgPercent > 100 ? 'red' : '#fff' }}>{currentPG} / {effectivePG} MW</span>
+            <span className="stat-val" style={{ color: pgPercent > 100 ? 'red' : '#fff' }}>{eff.used.pg} / {effectivePG} MW</span>
           </div>
           <div style={{ height: '4px', background: 'rgba(255,255,255,0.1)', marginBottom: '8px' }}>
             <div style={{ height: '100%', width: `${pgPercent}%`, background: pgPercent > 100 ? 'red' : 'var(--color-gallente)' }} />
@@ -127,7 +188,7 @@ export default function FittingWindow() {
 
           <div className="stat-row">
             <span>CPU</span>
-            <span className="stat-val" style={{ color: cpuPercent > 100 ? 'red' : '#fff' }}>{currentCPU} / {effectiveCPU} tf</span>
+            <span className="stat-val" style={{ color: cpuPercent > 100 ? 'red' : '#fff' }}>{eff.used.cpu} / {effectiveCPU} tf</span>
           </div>
           <div style={{ height: '4px', background: 'rgba(255,255,255,0.1)', marginBottom: '8px' }}>
             <div style={{ height: '100%', width: `${cpuPercent}%`, background: cpuPercent > 100 ? 'red' : 'var(--color-shield)' }} />
@@ -136,22 +197,32 @@ export default function FittingWindow() {
 
         <div className="stat-group">
           <h3>Defense</h3>
-          <div className="stat-row"><span>Shield HP</span><span className="stat-val" style={{ color: 'var(--color-shield)' }}>{activeShip.defense.shield.hp}</span></div>
-          <div className="stat-row"><span>Armor HP</span><span className="stat-val" style={{ color: 'var(--color-armor)' }}>{activeShip.defense.armor.hp}</span></div>
-          <div className="stat-row"><span>Structure HP</span><span className="stat-val" style={{ color: 'var(--color-hull)' }}>{activeShip.defense.hull.hp}</span></div>
-          <div className="stat-row"><span>Signature Radius</span><span className="stat-val">{activeShip.defense.sig_radius} m</span></div>
+          <div className="stat-row"><span>Shield HP</span><span className="stat-val" style={{ color: 'var(--color-shield)' }}>{Math.round(eff.defense.shield.hp)}</span></div>
+          <div className="stat-row"><span>Shield Resists</span><span className="stat-val" style={{ fontSize: '0.75rem' }}>{fmtResist(eff.defense.shield)}</span></div>
+          <div className="stat-row"><span>Armor HP</span><span className="stat-val" style={{ color: 'var(--color-armor)' }}>{Math.round(eff.defense.armor.hp)}</span></div>
+          <div className="stat-row"><span>Armor Resists</span><span className="stat-val" style={{ fontSize: '0.75rem' }}>{fmtResist(eff.defense.armor)}</span></div>
+          <div className="stat-row"><span>Structure HP</span><span className="stat-val" style={{ color: 'var(--color-hull)' }}>{Math.round(eff.defense.hull.hp)}</span></div>
+          <div className="stat-row"><span>Structure Resists</span><span className="stat-val" style={{ fontSize: '0.75rem' }}>{fmtResist(eff.defense.hull)}</span></div>
+          <div className="stat-row"><span>Signature Radius</span><span className="stat-val">{Math.round(eff.defense.sig_radius)} m</span></div>
+        </div>
+
+        <div className="stat-group">
+          <h3>Offense</h3>
+          <div className="stat-row"><span>Hybrid Damage</span><span className="stat-val">×{eff.damageMult.hybrid_weapon.toFixed(2)}</span></div>
+          <div className="stat-row"><span>Missile Damage</span><span className="stat-val">×{eff.damageMult.missile_weapon.toFixed(2)}</span></div>
         </div>
 
         <div className="stat-group">
           <h3>Capacitor</h3>
-          <div className="stat-row"><span>Capacity</span><span className="stat-val">{activeShip.resources.cap_capacity} GJ</span></div>
-          <div className="stat-row"><span>Recharge Time</span><span className="stat-val">{activeShip.resources.cap_recharge} s</span></div>
+          <div className="stat-row"><span>Capacity</span><span className="stat-val">{Math.round(eff.resources.cap_capacity)} GJ</span></div>
+          <div className="stat-row"><span>Recharge Time</span><span className="stat-val">{eff.resources.cap_recharge} s</span></div>
         </div>
 
         <div className="stat-group">
           <h3>Navigation</h3>
-          <div className="stat-row"><span>Base Speed</span><span className="stat-val">{activeShip.mobility.base_speed} m/s</span></div>
-          <div className="stat-row"><span>Mass</span><span className="stat-val">{activeShip.mobility.mass.toLocaleString()} kg</span></div>
+          <div className="stat-row"><span>Base Speed</span><span className="stat-val">{Math.round(eff.mobility.base_speed)} m/s</span></div>
+          <div className="stat-row"><span>Agility</span><span className="stat-val">{eff.mobility.agility.toFixed(2)} s</span></div>
+          <div className="stat-row"><span>Mass</span><span className="stat-val">{eff.mobility.mass.toLocaleString()} kg</span></div>
         </div>
 
       </div>

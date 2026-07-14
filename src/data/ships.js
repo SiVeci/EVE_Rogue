@@ -7,6 +7,7 @@ export const SHIPS = {
     name: 'Incursus',
     faction: 'Gallente',
     class: 'Frigate',
+    price: 60000,
     description: 'A heavy combat frigate favored by Gallente forces. Excels at close range with blasters and strong armor repair.',
     slots: {
       high: 3,
@@ -40,6 +41,7 @@ export const SHIPS = {
     name: 'Kestrel',
     faction: 'Caldari',
     class: 'Frigate',
+    price: 75000,
     description: 'A missile boat designed for standoff engagements. Relies on strong shields and consistent missile damage.',
     slots: {
       high: 4,
@@ -62,6 +64,107 @@ export const SHIPS = {
       mass: 1150000,
       base_speed: 305,
       agility: 3.5
+    },
+    drone_bandwidth: 0,
+    drone_bay: 0
+  },
+
+  merlin: {
+    id: 'merlin',
+    name: 'Merlin',
+    faction: 'Caldari',
+    class: 'Frigate',
+    price: 65000,
+    description: 'A hybrid-turret platform built on Caldari shield doctrine. Carries the highest base shield HP of any frigate.',
+    slots: {
+      high: 3,
+      mid: 4,
+      low: 2
+    },
+    resources: {
+      pg: 38,
+      cpu: 155,
+      cap_capacity: 350,
+      cap_recharge: 165
+    },
+    defense: {
+      shield: { hp: 520, em: 0, th: 20, kin: 40, exp: 50 },
+      armor: { hp: 220, em: 50, th: 35, kin: 25, exp: 10 },
+      hull: { hp: 260, em: 0, th: 0, kin: 0, exp: 0 },
+      sig_radius: 40
+    },
+    mobility: {
+      mass: 1120000,
+      base_speed: 320,
+      agility: 3.2
+    },
+    drone_bandwidth: 0,
+    drone_bay: 0
+  },
+
+  // Gallente Frigates
+  atron: {
+    id: 'atron',
+    name: 'Atron',
+    faction: 'Gallente',
+    class: 'Frigate',
+    price: 50000,
+    description: 'The fastest hull in known space. Thin across all three defense layers — cheap, disposable, and hard to catch.',
+    slots: {
+      high: 3,
+      mid: 3,
+      low: 3
+    },
+    resources: {
+      pg: 35,
+      cpu: 120,
+      cap_capacity: 300,
+      cap_recharge: 170
+    },
+    defense: {
+      shield: { hp: 280, em: 0, th: 20, kin: 40, exp: 50 },
+      armor: { hp: 280, em: 50, th: 35, kin: 25, exp: 10 },
+      hull: { hp: 280, em: 0, th: 0, kin: 0, exp: 0 },
+      sig_radius: 35
+    },
+    mobility: {
+      mass: 1000000,
+      base_speed: 400,
+      agility: 2.2
+    },
+    drone_bandwidth: 0,
+    drone_bay: 0
+  },
+
+  catalyst: {
+    id: 'catalyst',
+    name: 'Catalyst',
+    faction: 'Gallente',
+    class: 'Destroyer',
+    price: 180000,
+    requiredSkills: { destroyers: 1 },
+    description: 'A destroyer-class turret platform: eight high slots of raw DPS traded for a large signature and sluggish agility. Fast small ships can out-orbit its tracking.',
+    slots: {
+      high: 8,
+      mid: 2,
+      low: 3
+    },
+    resources: {
+      pg: 90,
+      cpu: 220,
+      cap_capacity: 450,
+      cap_recharge: 200
+    },
+    defense: {
+      shield: { hp: 400, em: 0, th: 20, kin: 40, exp: 50 },
+      armor: { hp: 450, em: 50, th: 35, kin: 35, exp: 10 },
+      hull: { hp: 450, em: 0, th: 0, kin: 0, exp: 0 },
+      sig_radius: 65
+    },
+    mobility: {
+      mass: 2200000,
+      base_speed: 250,
+      agility: 4.5
     },
     drone_bandwidth: 0,
     drone_bay: 0

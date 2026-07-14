@@ -1,8 +1,13 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { Canvas, useFrame } from '@react-three/fiber';
 import { OrbitControls, Stars, Grid } from '@react-three/drei';
-import { useGameStore, skillMult } from '../store/gameStore';
-import { getEncounter } from '../data/npcs';
+import { useGameStore } from '../store/gameStore';
+import { rollEncounter } from '../data/npcs';
+import { getCapacitorRecharge, rollTurretShot, applyDamage, desiredVelocity, applyInertia } from '../lib/combat';
+import { getEffectiveStats, activeModules } from '../lib/shipStats';
+import { rollLoot } from '../lib/loot';
+import { MODULES } from '../data/modules';
+import { TIER_COLORS } from '../lib/tiers';
 import * as THREE from 'three';
 
 // Units: 1 world unit = 1 km. Data files use EVE units (meters, m/s),
@@ -11,59 +16,6 @@ const UP = new THREE.Vector3(0, 1, 0);
 const PLAYER_SPAWN = [-2, 0, 0];
 const ENEMY_SPAWN = [2, 0, 0];
 const MAX_DT = 0.1; // clamp frame delta so tab switches don't teleport ships
-
-// --- PHYSICS & MATH HELPERS ---
-function getCapacitorRecharge(current, max, rechargeTime, dt) {
-  const ratio = Math.max(0.01, Math.min(0.99, current / max));
-  const rate = 10 * (max / rechargeTime) * (Math.sqrt(ratio) - ratio);
-  return rate * dt;
-}
-
-// EVE Turret Hit Chance Formula (Simplified for 2.5D)
-// angularVel is in rad/s at real scale (km/s over km), so the 40000 signature
-// factor matches EVE's tuning: ~0.4 rad/s vs a frigate is a coin flip.
-function calculateHitChance(distance, optimal, falloff, tracking, targetSig, angularVel) {
-  const distPenalty = Math.max(0, distance - optimal) / Math.max(1, falloff);
-  const trackPenalty = (angularVel * 40000) / (tracking * targetSig);
-  const exponent = Math.pow(distPenalty, 2) + Math.pow(trackPenalty, 2);
-  return Math.pow(0.5, exponent);
-}
-
-// Damage lands on the outermost intact layer, reduced by that layer's resists.
-// No bleed-through: a volley never spills into the layer below.
-function applyDamage(hp, defense, damageByType, mult = 1) {
-  const layer = hp.shield > 0 ? 'shield' : hp.armor > 0 ? 'armor' : 'hull';
-  const resists = defense[layer];
-  let dmg = 0;
-  for (const [type, raw] of Object.entries(damageByType)) {
-    dmg += raw * mult * (1 - (resists[type] || 0) / 100);
-  }
-  hp[layer] = Math.max(0, hp[layer] - dmg);
-  return { layer, dmg };
-}
-
-// Direction a ship should push toward to satisfy a movement command.
-function desiredVelocity(command, dirToTarget, dist, maxSpeed) {
-  if (command.type === 'approach') {
-    if (dist > 0.2) return dirToTarget.clone().multiplyScalar(maxSpeed);
-  } else if (command.type === 'keepAtRange') {
-    if (dist > command.radius + 0.1) return dirToTarget.clone().multiplyScalar(maxSpeed);
-    if (dist < command.radius - 0.1) return dirToTarget.clone().multiplyScalar(-maxSpeed);
-  } else if (command.type === 'orbit') {
-    let theta;
-    if (dist >= command.radius) theta = Math.asin(command.radius / dist);
-    else theta = Math.PI / 2 + Math.acos(dist / command.radius);
-    return dirToTarget.clone().applyAxisAngle(UP, theta).normalize().multiplyScalar(maxSpeed);
-  }
-  return new THREE.Vector3(); // 'stop'
-}
-
-// Velocity eases toward the commanded vector; agility is the time constant
-// (seconds to reach ~63% of the change), standing in for EVE's mass/inertia.
-function applyInertia(vel, desired, dt, agility) {
-  const blend = 1 - Math.exp(-dt / Math.max(0.1, agility));
-  vel.lerp(desired, blend);
-}
 
 function formatDistance(km) {
   return km < 10 ? `${Math.round(km * 1000).toLocaleString()} m` : `${km.toFixed(1)} km`;
@@ -122,26 +74,29 @@ function HudBar({ label, value, max, color }) {
   );
 }
 
-export default function BattleScene({ nodeType = 'patrol', onVictory, onDefeat }) {
-  const { activeShip, skills, deadspaceDepth, addIsk, advanceDepth, shipDestroyed } = useGameStore();
+export default function BattleScene({ encounter, nodeType = 'patrol', onVictory, onDefeat }) {
+  const { activeShip, skills, deadspaceDepth, addIsk, addLoot, advanceDepth, shipDestroyed } = useGameStore();
 
-  const enemy = useMemo(() => getEncounter(deadspaceDepth, nodeType), [deadspaceDepth, nodeType]);
-  const gunneryMult = skillMult(skills.gunnery);
-  const navigationMult = skillMult(skills.navigation);
+  // Encounters are pre-generated on the map (what you scan is what you fight);
+  // the roll here is only a fallback for direct entry.
+  const enemy = useMemo(
+    () => encounter ?? rollEncounter(deadspaceDepth, nodeType),
+    [encounter, deadspaceDepth, nodeType]
+  );
 
-  // Flatten modules for tracking
-  const allFittedModules = [
-    ...activeShip.fittedModules.high,
-    ...activeShip.fittedModules.mid,
-    ...activeShip.fittedModules.low
-  ];
+  // Single source of truth for stats: base hull + passive modifiers + skills.
+  // Same function FittingWindow and gameStore.fitModule use.
+  const eff = useMemo(
+    () => getEffectiveStats(activeShip, activeShip.fittedModules, skills),
+    [activeShip, skills]
+  );
 
   // Local React State for UI (synced periodically from the sim refs)
   const [playerHud, setPlayerHud] = useState({
-    shield: activeShip.defense.shield.hp,
-    armor: activeShip.defense.armor.hp,
-    hull: activeShip.defense.hull.hp,
-    cap: activeShip.resources.cap_capacity
+    shield: eff.defense.shield.hp,
+    armor: eff.defense.armor.hp,
+    hull: eff.defense.hull.hp,
+    cap: eff.resources.cap_capacity
   });
   const [enemyHud, setEnemyHud] = useState({
     shield: enemy.defense.shield.hp,
@@ -153,6 +108,7 @@ export default function BattleScene({ nodeType = 'patrol', onVictory, onDefeat }
   const [command, setCommand] = useState({ type: 'stop', radius: 0 });
   const [combatLog, setCombatLog] = useState(["Gate activation complete. Hostile on scan."]);
   const [outcome, setOutcome] = useState(null); // null | 'victory' | 'defeat'
+  const [lootIds, setLootIds] = useState([]); // module ids rolled on victory
   const [, setForceRender] = useState(0);
 
   // Physics Refs — all simulation state lives here and is mutated every frame
@@ -162,11 +118,11 @@ export default function BattleScene({ nodeType = 'patrol', onVictory, onDefeat }
   const enemyVel = useRef(new THREE.Vector3());
   const playerRot = useRef(Math.PI / 2);  // spawns facing each other along +x / -x
   const enemyRot = useRef(-Math.PI / 2);
-  const capRef = useRef(activeShip.resources.cap_capacity);
+  const capRef = useRef(eff.resources.cap_capacity);
   const playerHp = useRef({
-    shield: activeShip.defense.shield.hp,
-    armor: activeShip.defense.armor.hp,
-    hull: activeShip.defense.hull.hp
+    shield: eff.defense.shield.hp,
+    armor: eff.defense.armor.hp,
+    hull: eff.defense.hull.hp
   });
   const enemyHp = useRef({
     shield: enemy.defense.shield.hp,
@@ -180,8 +136,10 @@ export default function BattleScene({ nodeType = 'patrol', onVictory, onDefeat }
   const lastTime = useRef(performance.now());
   const hudAccumulator = useRef(0);
 
-  // Module States Ref (tracks cooldowns and active status independently of React re-renders)
-  const modulesStateRef = useRef(allFittedModules.map(m => ({ ...m, active: false, timer: 0 })));
+  // Module States Ref (tracks cooldowns and active status independently of React re-renders).
+  // Passive modules are excluded: their effects are already baked into `eff`,
+  // so they never enter the rack UI or the per-frame processing loop below.
+  const modulesStateRef = useRef(activeModules(activeShip.fittedModules).map(m => ({ ...m, active: false, timer: 0 })));
 
   const addLog = (msg) => {
     setCombatLog(prev => [msg, ...prev].slice(0, 6));
@@ -223,6 +181,9 @@ export default function BattleScene({ nodeType = 'patrol', onVictory, onDefeat }
     playerVel.current.set(0, 0, 0);
     enemyVel.current.set(0, 0, 0);
     addLog(result === 'victory' ? 'Target destroyed!' : 'Hull breach — your ship is lost!');
+    // Rolled here (battle-result time), not on the button click, so
+    // dismissing/reopening the modal can't re-roll the wreck.
+    if (result === 'victory') setLootIds(rollLoot(enemy, deadspaceDepth, nodeType));
     syncHud(playerPos.current.distanceTo(enemyPos.current));
     setOutcome(result);
   };
@@ -247,14 +208,18 @@ export default function BattleScene({ nodeType = 'patrol', onVictory, onDefeat }
     angularVelocity.current = Math.abs(tangent.dot(relVel)) / Math.max(0.05, dist);
 
     // 2. Player modules
-    let playerMaxSpeed = (activeShip.mobility.base_speed / 1000) * navigationMult; // u/s
+    let playerMaxSpeed = eff.mobility.base_speed / 1000; // u/s — navigation skill + passive mods already folded into eff
+    let playerSigMult = 1; // MWD signature bloom makes the player easier to hit
     let enemyWebbed = false;
 
     modulesStateRef.current.forEach((mod) => {
       if (!mod.active) return;
 
       // Continuous effects of active modules
-      if (mod.type === 'propulsion') playerMaxSpeed *= mod.stats.speed_multiplier;
+      if (mod.type === 'propulsion') {
+        playerMaxSpeed *= mod.stats.speed_multiplier;
+        playerSigMult *= mod.stats.sig_multiplier || 1;
+      }
       if (mod.type === 'ewar' && distMeters <= mod.stats.optimal) enemyWebbed = true;
 
       if (mod.timer > 0) {
@@ -278,25 +243,20 @@ export default function BattleScene({ nodeType = 'patrol', onVictory, onDefeat }
       mod.timer = mod.stats.rof || mod.stats.activation_time;
 
       if (mod.type === 'hybrid_weapon') {
-        const hitChance = calculateHitChance(
-          distMeters, mod.stats.optimal, mod.stats.falloff, mod.stats.tracking,
-          enemy.defense.sig_radius, angularVelocity.current
-        );
-        const roll = Math.random();
-        if (roll < hitChance) {
-          const quality = roll < 0.01 ? 3.0 : 0.5 + Math.random() * 0.5; // 1% wrecking shot
-          const { dmg } = applyDamage(enemyHp.current, enemy.defense, mod.stats.damage, quality * gunneryMult);
+        const quality = rollTurretShot(distMeters, mod.stats, enemy.defense.sig_radius, angularVelocity.current);
+        if (quality !== null) {
+          const { dmg } = applyDamage(enemyHp.current, enemy.defense, mod.stats.damage, quality * eff.damageMult.hybrid_weapon);
           addLog(`[${mod.name}] ${quality === 3.0 ? 'WRECKS' : 'hits'} for ${Math.floor(dmg)} dmg!`);
         } else {
           addLog(`[${mod.name}] Misses!`);
         }
       } else if (mod.type === 'missile_weapon') {
-        const { dmg } = applyDamage(enemyHp.current, enemy.defense, mod.stats.damage, gunneryMult);
+        const { dmg } = applyDamage(enemyHp.current, enemy.defense, mod.stats.damage, eff.damageMult.missile_weapon);
         addLog(`[${mod.name}] Hits for ${Math.floor(dmg)} dmg!`);
       } else if (mod.type === 'shield_repair') {
-        playerHp.current.shield = Math.min(activeShip.defense.shield.hp, playerHp.current.shield + mod.stats.shield_bonus);
+        playerHp.current.shield = Math.min(eff.defense.shield.hp, playerHp.current.shield + mod.stats.shield_bonus);
       } else if (mod.type === 'armor_repair') {
-        playerHp.current.armor = Math.min(activeShip.defense.armor.hp, playerHp.current.armor + mod.stats.armor_bonus);
+        playerHp.current.armor = Math.min(eff.defense.armor.hp, playerHp.current.armor + mod.stats.armor_bonus);
       }
       // 'ewar' and 'propulsion' cycles only pay capacitor; effects applied above
     });
@@ -308,11 +268,35 @@ export default function BattleScene({ nodeType = 'patrol', onVictory, onDefeat }
 
     // 3. Enemy AI: orbit the player at preferred range, fire when in range
     const enemyMaxSpeed = (enemy.mobility.base_speed / 1000) * (enemyWebbed ? 0.5 : 1);
+
+    // Enemy EWAR: their web slows the player inside its envelope
+    if (enemy.ewar && distMeters <= enemy.ewar.optimal) {
+      playerMaxSpeed *= 1 - enemy.ewar.speed_reduction_pct / 100;
+    }
+
     enemyWeaponTimer.current -= dt;
     if (enemyWeaponTimer.current <= 0) {
-      if (distMeters <= enemy.weapon.stats.range) {
-        enemyWeaponTimer.current = enemy.weapon.stats.rof;
-        const { dmg, layer } = applyDamage(playerHp.current, activeShip.defense, enemy.weapon.stats.damage);
+      const weapon = enemy.weapon;
+      if (weapon.type === 'hybrid_weapon') {
+        // Turrets share the player's hit formula, rolled against the player's
+        // effective signature (MWD bloom makes you easier to hit).
+        if (distMeters <= weapon.stats.optimal + 2 * weapon.stats.falloff) {
+          enemyWeaponTimer.current = weapon.stats.rof;
+          const effectiveSig = eff.defense.sig_radius * playerSigMult;
+          const quality = rollTurretShot(distMeters, weapon.stats, effectiveSig, angularVelocity.current);
+          if (quality !== null) {
+            const { dmg, layer } = applyDamage(playerHp.current, eff.defense, weapon.stats.damage, quality);
+            addLog(`${enemy.name} ${quality === 3.0 ? 'WRECKS' : 'hits'} your ${layer} for ${Math.floor(dmg)}!`);
+          } else {
+            addLog(`${enemy.name} misses!`);
+          }
+        } else {
+          enemyWeaponTimer.current = 0.5;
+        }
+      } else if (distMeters <= weapon.stats.range) {
+        // Missiles always hit inside their range
+        enemyWeaponTimer.current = weapon.stats.rof;
+        const { dmg, layer } = applyDamage(playerHp.current, eff.defense, weapon.stats.damage);
         addLog(`${enemy.name} hits your ${layer} for ${Math.floor(dmg)}!`);
       } else {
         enemyWeaponTimer.current = 0.5;
@@ -326,7 +310,7 @@ export default function BattleScene({ nodeType = 'patrol', onVictory, onDefeat }
 
     // 4. Movement: velocity eases toward each command's desired vector (inertia)
     const desiredPlayer = desiredVelocity(commandRef.current, dirToEnemy, dist, playerMaxSpeed);
-    applyInertia(playerVel.current, desiredPlayer, dt, activeShip.mobility.agility);
+    applyInertia(playerVel.current, desiredPlayer, dt, eff.mobility.agility);
     playerPos.current.addScaledVector(playerVel.current, dt);
 
     const dirToPlayer = dirToEnemy.clone().negate();
@@ -338,8 +322,8 @@ export default function BattleScene({ nodeType = 'patrol', onVictory, onDefeat }
     if (enemyVel.current.lengthSq() > 1e-6) enemyRot.current = Math.atan2(enemyVel.current.x, enemyVel.current.z);
 
     // 5. Capacitor Recharge
-    const capMax = activeShip.resources.cap_capacity;
-    capRef.current = Math.min(capMax, capRef.current + getCapacitorRecharge(capRef.current, capMax, activeShip.resources.cap_recharge, dt));
+    const capMax = eff.resources.cap_capacity;
+    capRef.current = Math.min(capMax, capRef.current + getCapacitorRecharge(capRef.current, capMax, eff.resources.cap_recharge, dt));
 
     // 6. Sync UI a few times per second
     hudAccumulator.current += dt;
@@ -374,12 +358,24 @@ export default function BattleScene({ nodeType = 'patrol', onVictory, onDefeat }
       {outcome === 'victory' && (
         <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', background: 'rgba(10,15,25,0.95)', border: '1px solid #2cd67c', padding: '3rem', borderRadius: '8px', zIndex: 100, textAlign: 'center', boxShadow: '0 0 50px rgba(44, 214, 124, 0.2)' }}>
           <h2 style={{ color: '#2cd67c', fontSize: '2rem', marginBottom: '1rem', fontFamily: 'var(--font-display)' }}>TARGET DESTROYED</h2>
-          <p style={{ color: 'var(--color-text-muted)', marginBottom: '2rem' }}>
+          <p style={{ color: 'var(--color-text-muted)', marginBottom: '1rem' }}>
             The {enemy.name} breaks apart. Bounty: {enemy.reward.toLocaleString()} ISK.
           </p>
+          <div style={{ textAlign: 'left', minWidth: '260px', marginBottom: '2rem' }}>
+            {lootIds.length === 0 ? (
+              <p style={{ color: 'var(--color-text-muted)', fontSize: '0.85rem', margin: 0 }}>No salvageable modules.</p>
+            ) : (
+              lootIds.map((id, i) => (
+                <p key={i} style={{ color: TIER_COLORS[MODULES[id].tier] || '#fff', fontSize: '0.85rem', margin: '0.25rem 0' }}>
+                  + {MODULES[id].name} <span style={{ opacity: 0.7 }}>({MODULES[id].tier})</span>
+                </p>
+              ))
+            )}
+          </div>
           <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center' }}>
             <button onClick={() => {
               addIsk(enemy.reward);
+              addLoot(lootIds);
               advanceDepth();
               onVictory();
             }} style={{ background: '#2cd67c', color: '#000', border: 'none', padding: '1rem 2rem', fontWeight: 'bold' }}>
@@ -449,10 +445,10 @@ export default function BattleScene({ nodeType = 'patrol', onVictory, onDefeat }
       <div style={{ position: 'absolute', bottom: '2rem', left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: '2rem' }}>
         <div style={{ background: 'rgba(0,0,0,0.8)', border: '1px solid rgba(77,238,234,0.5)', padding: '1rem', borderRadius: '8px', width: '320px', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
           <h3 style={{ color: '#fff', fontSize: '1rem', marginBottom: '0.25rem' }}>{activeShip.name} (You)</h3>
-          <HudBar label="Shield" value={playerHud.shield} max={activeShip.defense.shield.hp} color="var(--color-shield)" />
-          <HudBar label="Armor" value={playerHud.armor} max={activeShip.defense.armor.hp} color="var(--color-armor)" />
-          <HudBar label="Structure" value={playerHud.hull} max={activeShip.defense.hull.hp} color="var(--color-hull)" />
-          <HudBar label="Capacitor" value={playerHud.cap} max={activeShip.resources.cap_capacity} color="#e8a838" />
+          <HudBar label="Shield" value={playerHud.shield} max={eff.defense.shield.hp} color="var(--color-shield)" />
+          <HudBar label="Armor" value={playerHud.armor} max={eff.defense.armor.hp} color="var(--color-armor)" />
+          <HudBar label="Structure" value={playerHud.hull} max={eff.defense.hull.hp} color="var(--color-hull)" />
+          <HudBar label="Capacitor" value={playerHud.cap} max={eff.resources.cap_capacity} color="#e8a838" />
         </div>
         <div style={{ background: 'rgba(0,0,0,0.8)', border: '1px solid rgba(255,74,74,0.5)', padding: '1rem', borderRadius: '8px', width: '320px', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
           <h3 style={{ color: '#ff4a4a', fontSize: '1rem', marginBottom: '0.25rem' }}>{enemy.name}</h3>

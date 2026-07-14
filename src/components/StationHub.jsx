@@ -1,18 +1,22 @@
 import React, { useState } from 'react';
 import FittingWindow from './FittingWindow';
+import MarketWindow from './MarketWindow';
 import { useGameStore } from '../store/gameStore';
+import { SKILLS } from '../data/skills';
 
-const TRAIN_COST = 1000; // SP per level
-
-const SKILL_DEFS = [
-  { key: 'gunnery', label: 'Gunnery', desc: '+5% Weapon Damage per level' },
-  { key: 'engineering', label: 'Engineering', desc: '+5% CPU and Powergrid per level' },
-  { key: 'navigation', label: 'Navigation', desc: '+5% Base Speed per level' }
-];
+// Cost to train the *next* level. A gate skill's first level (0->1) costs
+// 1,000 SP, not free; stat skills' first upgrade (1->2) costs 2,000.
+const trainCost = (level) => 1000 * (level + 1);
 
 export default function StationHub({ onUndock }) {
   const [activeTab, setActiveTab] = useState('fitting');
-  const { isk, sp, skills, blueprints, trainSkill, manufacture } = useGameStore();
+  const { isk, sp, skills, blueprints, trainSkill, manufacture, resetProgress } = useGameStore();
+
+  const handleReset = () => {
+    if (window.confirm('Reset all progress? ISK, skills, hangar and fitting will be wiped.')) {
+      resetProgress();
+    }
+  };
 
   return (
     <div style={{ width: '100%', height: '100%', display: 'flex', flexDirection: 'column' }}>
@@ -21,18 +25,26 @@ export default function StationHub({ onUndock }) {
         <button onClick={() => setActiveTab('fitting')} style={{ background: activeTab === 'fitting' ? 'rgba(90,150,255,0.2)' : 'transparent', color: activeTab === 'fitting' ? '#fff' : '#888' }}>
           FITTING
         </button>
+        <button onClick={() => setActiveTab('market')} style={{ background: activeTab === 'market' ? 'rgba(90,150,255,0.2)' : 'transparent', color: activeTab === 'market' ? '#fff' : '#888' }}>
+          MARKET
+        </button>
         <button onClick={() => setActiveTab('industry')} style={{ background: activeTab === 'industry' ? 'rgba(90,150,255,0.2)' : 'transparent', color: activeTab === 'industry' ? '#fff' : '#888' }}>
           INDUSTRY
         </button>
         <button onClick={() => setActiveTab('skills')} style={{ background: activeTab === 'skills' ? 'rgba(90,150,255,0.2)' : 'transparent', color: activeTab === 'skills' ? '#fff' : '#888' }}>
           SKILLS
         </button>
+        <button onClick={handleReset} style={{ marginLeft: 'auto', background: 'transparent', border: '1px solid rgba(255,74,74,0.4)', color: '#ff4a4a' }}>
+          RESET PROGRESS
+        </button>
       </div>
 
       {/* Tab Content */}
       <div style={{ flex: 1, overflow: 'hidden' }}>
         {activeTab === 'fitting' && <FittingWindow />}
-        
+
+        {activeTab === 'market' && <MarketWindow />}
+
         {activeTab === 'industry' && (
           <div className="panel" style={{ padding: '2rem', height: '100%' }}>
             <h2 style={{ color: '#fff', marginBottom: '1rem' }}>Manufacturing Facility</h2>
@@ -60,20 +72,24 @@ export default function StationHub({ onUndock }) {
             <p style={{ color: '#e8a838', marginBottom: '2rem', fontSize: '1.2rem' }}>Unallocated SP: {sp.toLocaleString()}</p>
             
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', maxWidth: '500px' }}>
-              {SKILL_DEFS.map(def => (
-                <div key={def.key} style={{ background: 'rgba(0,0,0,0.5)', padding: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div>
-                    <h3 style={{ color: '#fff' }}>{def.label} Lv. {skills[def.key]}</h3>
-                    <p style={{ color: 'var(--color-text-muted)', fontSize: '0.8rem' }}>{def.desc}</p>
+              {Object.entries(SKILLS).map(([key, def]) => {
+                const level = skills[key] ?? 0;
+                const cost = trainCost(level);
+                return (
+                  <div key={key} style={{ background: 'rgba(0,0,0,0.5)', padding: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                      <h3 style={{ color: '#fff' }}>{def.name} Lv. {level}</h3>
+                      <p style={{ color: 'var(--color-text-muted)', fontSize: '0.8rem' }}>{def.desc}</p>
+                    </div>
+                    <button
+                      onClick={() => trainSkill(key, cost)}
+                      disabled={sp < cost}
+                      style={{ opacity: sp < cost ? 0.4 : 1, cursor: sp < cost ? 'not-allowed' : 'pointer' }}>
+                      Train ({cost.toLocaleString()} SP)
+                    </button>
                   </div>
-                  <button
-                    onClick={() => trainSkill(def.key, TRAIN_COST)}
-                    disabled={sp < TRAIN_COST}
-                    style={{ opacity: sp < TRAIN_COST ? 0.4 : 1, cursor: sp < TRAIN_COST ? 'not-allowed' : 'pointer' }}>
-                    Train ({TRAIN_COST.toLocaleString()} SP)
-                  </button>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}
