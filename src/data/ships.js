@@ -168,5 +168,39 @@ export const SHIPS = {
     },
     drone_bandwidth: 0,
     drone_bay: 0
+  },
+
+  cormorant: {
+    id: 'cormorant',
+    name: 'Cormorant',
+    faction: 'Caldari',
+    class: 'Destroyer',
+    price: 190000,
+    requiredSkills: { destroyers: 1 },
+    description: 'A railgun sniper platform: seven high slots behind Caldari shields, built to kill from beyond retaliation range. Slow to turn — anything that closes the gap can out-orbit its tracking.',
+    slots: {
+      high: 7,
+      mid: 4,
+      low: 2
+    },
+    resources: {
+      pg: 85,
+      cpu: 270,
+      cap_capacity: 425,
+      cap_recharge: 185
+    },
+    defense: {
+      shield: { hp: 550, em: 0, th: 20, kin: 40, exp: 50 },
+      armor: { hp: 350, em: 50, th: 35, kin: 25, exp: 10 },
+      hull: { hp: 400, em: 0, th: 0, kin: 0, exp: 0 },
+      sig_radius: 62
+    },
+    mobility: {
+      mass: 2300000,
+      base_speed: 240,
+      agility: 4.2
+    },
+    drone_bandwidth: 0,
+    drone_bay: 0
   }
 };

@@ -53,6 +53,23 @@ export const MODULES = {
       damage: { em: 0, th: 4.5, kin: 4.5, exp: 0 }
     }
   },
+  railgun_150mm_i: {
+    id: 'railgun_150mm_i',
+    name: '150mm Railgun I',
+    type: 'hybrid_weapon',
+    slot: 'high',
+    tier: 'T1',
+    price: 9000,
+    description: 'The heaviest small railgun. Reaches well past rocket range — poor tracking makes it nearly blind up close.',
+    cost: { pg: 8, cpu: 22, cap: 3.5 },
+    stats: {
+      optimal: 12000,
+      falloff: 4000,
+      tracking: 70,
+      rof: 4.0,
+      damage: { em: 0, th: 6, kin: 6, exp: 0 }
+    }
+  },
   light_neutron_blaster_ii: {
     id: 'light_neutron_blaster_ii',
     name: 'Light Neutron Blaster II',
@@ -60,6 +77,7 @@ export const MODULES = {
     slot: 'high',
     tier: 'T2',
     price: 30000,
+    requiredSkills: { small_hybrid_turret: 5 },
     description: 'The largest light hybrid turret. Tech II fitting requirements, meaningfully more damage than the Ion. Loot-only.',
     cost: { pg: 7, cpu: 18, cap: 3 },
     stats: {
@@ -460,6 +478,7 @@ export const MODULES = {
     tier: 'T2',
     price: 28000,
     passive: true,
+    requiredSkills: { missiles: 5 },
     description: 'Advanced missile guidance and warhead systems. Stronger than the T1 variant. Loot-only.',
     cost: { pg: 4, cpu: 24, cap: 0 },
     modifiers: [

@@ -1,15 +1,21 @@
 // NPC Ship Definitions & Encounter Scaling
 
+// SP awarded per victory, before depth/elite scaling — see docs/balance.md
+// "SP economy". Uniform across archetypes: bounty expresses target value,
+// SP expresses combat experience.
+const SP_REWARD_BASE = 200;
+
 export const NPCS = {
+  // Weak to kinetic (v0.8 retrofit — see docs/balance.md faction signature table).
   guristas_frigate: {
     id: 'guristas_frigate',
     name: 'Guristas Pirate',
     class: 'Frigate',
     faction: 'Guristas',
     defense: {
-      shield: { hp: 220, em: 0, th: 20, kin: 40, exp: 50 },
-      armor: { hp: 160, em: 50, th: 35, kin: 25, exp: 10 },
-      hull: { hp: 200, em: 0, th: 0, kin: 0, exp: 0 },
+      shield: { hp: 220, em: 35, th: 35, kin: 5, exp: 40 },
+      armor: { hp: 160, em: 30, th: 30, kin: 5, exp: 30 },
+      hull: { hp: 200, em: 30, th: 30, kin: 10, exp: 30 },
       sig_radius: 40 // meters
     },
     mobility: {
@@ -39,15 +45,16 @@ export const NPCS = {
   },
 
   // Close-orbit blaster boat: huge damage inside 2 km. Kite it or out-trade it.
+  // Weak to thermal (v0.8 retrofit, aligned to Serpentis Scout).
   serpentis_brawler: {
     id: 'serpentis_brawler',
     name: 'Serpentis Brawler',
     class: 'Frigate',
     faction: 'Serpentis',
     defense: {
-      shield: { hp: 180, em: 0, th: 20, kin: 40, exp: 50 },
-      armor: { hp: 280, em: 50, th: 35, kin: 25, exp: 10 },
-      hull: { hp: 220, em: 0, th: 0, kin: 0, exp: 0 },
+      shield: { hp: 180, em: 35, th: 5, kin: 35, exp: 40 },
+      armor: { hp: 280, em: 30, th: 5, kin: 30, exp: 30 },
+      hull: { hp: 220, em: 30, th: 10, kin: 30, exp: 30 },
       sig_radius: 38
     },
     mobility: {
@@ -80,15 +87,16 @@ export const NPCS = {
 
   // Long-range railgun kiter: deadly to a static target, nearly blind against
   // a fast close orbit. Burn in — but MWD signature bloom cuts both ways.
+  // Weak to kinetic (v0.8 retrofit, aligned to Guristas Pirate).
   guristas_sniper: {
     id: 'guristas_sniper',
     name: 'Guristas Sniper',
     class: 'Frigate',
     faction: 'Guristas',
     defense: {
-      shield: { hp: 280, em: 0, th: 20, kin: 40, exp: 50 },
-      armor: { hp: 140, em: 50, th: 35, kin: 25, exp: 10 },
-      hull: { hp: 180, em: 0, th: 0, kin: 0, exp: 0 },
+      shield: { hp: 280, em: 35, th: 35, kin: 5, exp: 40 },
+      armor: { hp: 140, em: 30, th: 30, kin: 5, exp: 30 },
+      hull: { hp: 180, em: 30, th: 30, kin: 10, exp: 30 },
       sig_radius: 42
     },
     mobility: {
@@ -120,15 +128,16 @@ export const NPCS = {
 
   // Rocket boat with a stasis web: slows the player inside 10 km. Bring a
   // stronger prop mod, or stay out of the web envelope entirely.
+  // Weak to explosive (v0.8 retrofit, aligned to Angel Hunter).
   angel_webber: {
     id: 'angel_webber',
     name: 'Angel Webber',
     class: 'Frigate',
     faction: 'Angel Cartel',
     defense: {
-      shield: { hp: 200, em: 0, th: 20, kin: 40, exp: 50 },
-      armor: { hp: 200, em: 50, th: 35, kin: 25, exp: 10 },
-      hull: { hp: 200, em: 0, th: 0, kin: 0, exp: 0 },
+      shield: { hp: 200, em: 35, th: 35, kin: 40, exp: 10 },
+      armor: { hp: 200, em: 35, th: 30, kin: 30, exp: 5 },
+      hull: { hp: 200, em: 30, th: 30, kin: 30, exp: 10 },
       sig_radius: 40
     },
     mobility: {
@@ -378,7 +387,8 @@ export function buildEncounter(npc, depth, nodeType = 'patrol') {
       ...npc.weapon,
       stats: { ...npc.weapon.stats, damage: scaleDamage(npc.weapon.stats.damage) }
     },
-    reward: Math.round(npc.baseReward * depthMult * (nodeType === 'elite' ? 2 : 1))
+    reward: Math.round(npc.baseReward * depthMult * (nodeType === 'elite' ? 2 : 1)),
+    spReward: Math.round(SP_REWARD_BASE * depthMult * (nodeType === 'elite' ? 2 : 1))
   };
 }
 

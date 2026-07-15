@@ -75,7 +75,7 @@ function HudBar({ label, value, max, color }) {
 }
 
 export default function BattleScene({ encounter, nodeType = 'patrol', onVictory, onDefeat }) {
-  const { activeShip, skills, deadspaceDepth, addIsk, addLoot, advanceDepth, shipDestroyed } = useGameStore();
+  const { activeShip, skills, deadspaceDepth, addIsk, addSp, addLoot, advanceDepth, shipDestroyed } = useGameStore();
 
   // Encounters are pre-generated on the map (what you scan is what you fight);
   // the roll here is only a fallback for direct entry.
@@ -359,7 +359,7 @@ export default function BattleScene({ encounter, nodeType = 'patrol', onVictory,
         <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', background: 'rgba(10,15,25,0.95)', border: '1px solid #2cd67c', padding: '3rem', borderRadius: '8px', zIndex: 100, textAlign: 'center', boxShadow: '0 0 50px rgba(44, 214, 124, 0.2)' }}>
           <h2 style={{ color: '#2cd67c', fontSize: '2rem', marginBottom: '1rem', fontFamily: 'var(--font-display)' }}>TARGET DESTROYED</h2>
           <p style={{ color: 'var(--color-text-muted)', marginBottom: '1rem' }}>
-            The {enemy.name} breaks apart. Bounty: {enemy.reward.toLocaleString()} ISK.
+            The {enemy.name} breaks apart. Bounty: {enemy.reward.toLocaleString()} ISK · <span style={{ color: '#e8a838' }}>+{enemy.spReward.toLocaleString()} SP</span>
           </p>
           <div style={{ textAlign: 'left', minWidth: '260px', marginBottom: '2rem' }}>
             {lootIds.length === 0 ? (
@@ -375,6 +375,7 @@ export default function BattleScene({ encounter, nodeType = 'patrol', onVictory,
           <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center' }}>
             <button onClick={() => {
               addIsk(enemy.reward);
+              addSp(enemy.spReward);
               addLoot(lootIds);
               advanceDepth();
               onVictory();

@@ -1,3 +1,6 @@
+import { SHIPS } from './ships';
+import { MODULES } from './modules';
+
 // Skill definitions. Two families, two default levels (see docs/balance.md):
 // stat skills feed skillMult() in src/lib/shipStats.js and start at 1 (its
 // no-bonus baseline); gate skills never feed skillMult — they only unlock
@@ -27,4 +30,19 @@ export function describeRequiredSkills(requiredSkills) {
   return Object.entries(requiredSkills || {})
     .map(([skill, level]) => `${SKILLS[skill]?.name || skill} ${level}`)
     .join(', ');
+}
+
+// Reverse-lookup everything a skill unlocks, grouped by required level
+// (ascending). Stat skills naturally return [] — nothing lists them in
+// requiredSkills.
+export function skillUnlocks(skillKey) {
+  const byLevel = new Map();
+  for (const item of [...Object.values(SHIPS), ...Object.values(MODULES)]) {
+    const lvl = item.requiredSkills?.[skillKey];
+    if (lvl === undefined) continue;
+    if (!byLevel.has(lvl)) byLevel.set(lvl, []);
+    byLevel.get(lvl).push(item.name);
+  }
+  return [...byLevel.entries()].sort((a, b) => a[0] - b[0])
+    .map(([level, names]) => ({ level, names }));
 }

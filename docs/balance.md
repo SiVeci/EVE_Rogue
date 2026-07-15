@@ -1,6 +1,6 @@
 # Balance Reference — v0.7+
 
-Numbers new content should be derived from. Existing shipped content (v0.1–v0.6) is **not** retroactively changed to match this doc — it's a forward-looking anchor written at the start of v0.7, not a rebalance pass. Where existing data doesn't cleanly express a rule below (e.g. Guristas' resists don't actually express a "weak to kinetic" identity), the new content still follows the rule; the old content is left alone.
+Numbers new content should be derived from. Existing shipped content (v0.1–v0.6) is **not** retroactively changed to match this doc — it's a forward-looking anchor written at the start of v0.7, not a rebalance pass. Where existing data doesn't cleanly express a rule below (e.g. Guristas' resists don't actually express a "weak to kinetic" identity), the new content still follows the rule; the old content is left alone. **Exception:** the 4 v0.4 NPCs' resist signatures were retrofitted in v0.8 (PRD-authorized, see the faction signature table below) — this is the one deliberate departure from "old content is left alone."
 
 ## Depth & difficulty scaling (existing, unchanged)
 
@@ -8,6 +8,30 @@ Numbers new content should be derived from. Existing shipped content (v0.1–v0.
 - Elite node: `statMult = depthMult × 1.5`; reward ×2 (vs ×1 for patrol).
 - EWAR strength (web %, optimal range) is NOT scaled by depth.
 - Loot tier unlocks: T1 depth 1+, Meta depth 4+, T2 depth 7+ (`TIER_UNLOCKS` in `src/lib/loot.js`).
+
+## SP economy (new in v0.8)
+
+- Combat SP: `spReward = round(200 × depthMult × eliteMult)` in `buildEncounter`
+  (`src/data/npcs.js`), eliteMult = 2 for elite / 1 for patrol. Same shape as the
+  ISK `reward`: scales on depthMult, NOT on the elite ×1.5 statMult. The 200 base
+  (`SP_REWARD_BASE`) is uniform across NPC archetypes — bounty expresses target
+  value, SP expresses combat experience.
+- Defeat pays no SP. Roguelike loss sharpness; also closes the "feed the spiral
+  for SP" farm. Revisit only if the death spiral proves too steep in play.
+- Depth table (patrol / elite): d1 200/400 · d2 230/460 · d3 260/520 · d4 290/580
+  · d5 320/640 · d6 350/700 · d7 380/760 · d8 410/820 · d10 470/940.
+- Training cost (unchanged): `1000 × (currentLevel + 1)`. Cumulative from level 0:
+  L1 1,000 · L2 3,000 · L3 6,000 · L4 10,000 · L5 15,000. Stat skills start at
+  level 1, so their L5 cumulative is 14,000.
+- Gate milestones: Destroyers I = 1,000 SP (≈5 patrol wins from zero — a fresh
+  save's 1,500 starting SP also covers it directly) · T2 support gate (level 4)
+  = 10,000 · T2 weapon gate (level 5) = 15,000.
+- Pace band: the first T2 weapon gate takes ≈30–55 wins of SP income (shallow
+  patrol-only ≈260 SP/win → ~55 wins; mid-depth with ~30% elite ≈390 SP/win →
+  ~38 wins; deep elite-heavy → ~30 wins). This measures SP earned; splitting SP
+  across stat skills defers gates — intended tension.
+- Tuning lever: adjust the 200 base only. Keep the formula shape and the
+  training-cost curve fixed so pacing changes stay one-knob.
 
 ## Tier strength ladder
 
@@ -47,21 +71,29 @@ Merlin trades total EHP for the highest *base shield* of any frigate (520, beati
 | Hull | Slots (H/M/L) | Raw EHP | Base speed | Agility | Sig | Price | requiredSkills |
 |------|---------------|---------|------------|---------|-----|-------|-----------------|
 | Catalyst | 8/2/3 | 1300 | 250 m/s | 4.5s | 65m | 180,000 | destroyers: 1 |
+| Cormorant | 7/4/2 | 1300 | 240 m/s | 4.2s | 62m | 190,000 | destroyers: 1 |
 
 ## TTK reference band
 
 At a hull's *own* unlock depth, a reasonably-fit player frigate vs. that depth's baseline NPC should reach a 20–60s time-to-kill in either direction — not a hard simulation requirement, a sanity check when picking new NPC HP/damage relative to existing player weapon DPS (~2.3–5.6 dps per T1–T2 high slot, before skills/passives).
 
-## Faction damage/resist signature (new in v0.7)
+## Faction damage/resist signature (v0.7, retrofit completed v0.8)
 
 | Faction | Deals | Weak against | NPCs |
 |---------|-------|---------------|------|
-| Guristas | KIN/TH (missile + railgun) | *(unchanged from v0.4 — no clean identity, not retrofitted)* | Guristas Pirate, Guristas Sniper |
+| Guristas | KIN/TH (missile + railgun) | KIN (v0.8 retrofit) | Guristas Pirate, Guristas Sniper |
 | Sansha's Nation | EM/TH | EM | Sansha Slaver, Sansha Ravager |
-| Serpentis | KIN/TH (+ web) | *(Brawler unchanged from v0.4)*; Scout: TH | Serpentis Brawler, Serpentis Scout |
-| Angel Cartel | EXP/KIN | *(Webber unchanged from v0.4)*; Hunter: EXP | Angel Webber, Angel Hunter |
+| Serpentis | KIN/TH (+ web) | TH (Scout v0.7; Brawler v0.8 retrofit) | Serpentis Brawler, Serpentis Scout |
+| Angel Cartel | EXP/KIN | EXP (Hunter v0.7; Webber v0.8 retrofit) | Angel Webber, Angel Hunter |
 
-Only the 4 new NPCs (Sansha ×2, Serpentis Scout, Angel Hunter) get a deliberately-authored resist signature: their weak damage type sits 20–30 resist points below their other three types across all three defense layers, so a correctly-typed player damage choice measurably shortens TTK without being an on/off switch. This is the pattern future factions should follow; retrofitting the 4 existing v0.4 NPCs is a separate, optional cleanup, not part of this version.
+All 8 NPCs now carry an authored resist signature: their weak damage type sits
+20–30 resist points below their other three types across all three defense
+layers, so a correctly-typed player damage choice measurably shortens TTK
+without being an on/off switch. The 4 v0.4-era NPCs' shield-layer `em: 0`
+generic hole is also narrowed as part of the v0.8 retrofit (NPC-side
+flattening; player hulls keep the EVE-conventional resist shape). This is a
+one-time, PRD-authorized exception to the "existing shipped content is not
+retroactively changed" rule below — everything else still holds.
 
 ## Skill defaults
 

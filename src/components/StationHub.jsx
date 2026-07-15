@@ -2,11 +2,49 @@ import React, { useState } from 'react';
 import FittingWindow from './FittingWindow';
 import MarketWindow from './MarketWindow';
 import { useGameStore } from '../store/gameStore';
-import { SKILLS } from '../data/skills';
+import { SKILLS, skillUnlocks } from '../data/skills';
 
 // Cost to train the *next* level. A gate skill's first level (0->1) costs
 // 1,000 SP, not free; stat skills' first upgrade (1->2) costs 2,000.
 const trainCost = (level) => 1000 * (level + 1);
+
+// Extracted so it can be rendered (and SSR-tested) without going through
+// StationHub's tab state, which defaults to 'fitting'.
+export function SkillsPanel({ sp, skills, trainSkill }) {
+  return (
+    <div className="panel" style={{ padding: '2rem', height: '100%' }}>
+      <h2 style={{ color: '#fff', marginBottom: '1rem' }}>Neural Enhancement</h2>
+      <p style={{ color: '#e8a838', marginBottom: '2rem', fontSize: '1.2rem' }}>Unallocated SP: {sp.toLocaleString()}</p>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', maxWidth: '500px' }}>
+        {Object.entries(SKILLS).map(([key, def]) => {
+          const level = skills[key] ?? 0;
+          const cost = trainCost(level);
+          const unlocks = skillUnlocks(key);
+          return (
+            <div key={key} style={{ background: 'rgba(0,0,0,0.5)', padding: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <h3 style={{ color: '#fff' }}>{def.name} Lv. {level}</h3>
+                <p style={{ color: 'var(--color-text-muted)', fontSize: '0.8rem' }}>{def.desc}</p>
+                {unlocks.map(({ level: reqLevel, names }) => (
+                  <p key={reqLevel} style={{ color: level >= reqLevel ? '#2cd67c' : '#5a96ff', fontSize: '0.75rem', margin: '0.25rem 0 0' }}>
+                    {level >= reqLevel ? '✓ ' : ''}Lv {reqLevel} → {names.join(', ')}
+                  </p>
+                ))}
+              </div>
+              <button
+                onClick={() => trainSkill(key, cost)}
+                disabled={sp < cost}
+                style={{ opacity: sp < cost ? 0.4 : 1, cursor: sp < cost ? 'not-allowed' : 'pointer' }}>
+                Train ({cost.toLocaleString()} SP)
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 export default function StationHub({ onUndock }) {
   const [activeTab, setActiveTab] = useState('fitting');
@@ -66,33 +104,7 @@ export default function StationHub({ onUndock }) {
           </div>
         )}
 
-        {activeTab === 'skills' && (
-          <div className="panel" style={{ padding: '2rem', height: '100%' }}>
-            <h2 style={{ color: '#fff', marginBottom: '1rem' }}>Neural Enhancement</h2>
-            <p style={{ color: '#e8a838', marginBottom: '2rem', fontSize: '1.2rem' }}>Unallocated SP: {sp.toLocaleString()}</p>
-            
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', maxWidth: '500px' }}>
-              {Object.entries(SKILLS).map(([key, def]) => {
-                const level = skills[key] ?? 0;
-                const cost = trainCost(level);
-                return (
-                  <div key={key} style={{ background: 'rgba(0,0,0,0.5)', padding: '1rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <div>
-                      <h3 style={{ color: '#fff' }}>{def.name} Lv. {level}</h3>
-                      <p style={{ color: 'var(--color-text-muted)', fontSize: '0.8rem' }}>{def.desc}</p>
-                    </div>
-                    <button
-                      onClick={() => trainSkill(key, cost)}
-                      disabled={sp < cost}
-                      style={{ opacity: sp < cost ? 0.4 : 1, cursor: sp < cost ? 'not-allowed' : 'pointer' }}>
-                      Train ({cost.toLocaleString()} SP)
-                    </button>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
+        {activeTab === 'skills' && <SkillsPanel sp={sp} skills={skills} trainSkill={trainSkill} />}
       </div>
     </div>
   );

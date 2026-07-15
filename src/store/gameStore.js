@@ -76,6 +76,7 @@ export const useGameStore = create(persist((set) => ({
 
   // Actions
   addIsk: (amount) => set(state => ({ isk: state.isk + amount })),
+  addSp: (amount) => set(state => ({ sp: state.sp + amount })),
   advanceDepth: () => set(state => ({ deadspaceDepth: state.deadspaceDepth + 1 })),
   // Combat loot (see src/lib/loot.js rollLoot) — unknown ids are silently
   // dropped, same tolerance fromIds already gives save-file rehydration.
