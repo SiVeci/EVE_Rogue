@@ -95,6 +95,43 @@ flattening; player hulls keep the EVE-conventional resist shape). This is a
 one-time, PRD-authorized exception to the "existing shipped content is not
 retroactively changed" rule below — everything else still holds.
 
+## Run structure (new in v0.9)
+
+- Segment: 5 layers (SEGMENT_LAYERS, src/lib/runmap.js), 2–3 nodes per layer
+  (50/50). Node depth = segment start + layer index: a segment starting at depth
+  d spans d…d+4. Completing the final layer sets depth to d+5 (advanceSegment) —
+  the only way depth advances. Retreat dead-ends, ABORT & DOCK and page refresh
+  keep depth at d; death still resets to 1.
+- Node type weights — layer 1: patrol 100%; layers 2–4: patrol 55% / elite 15% /
+  wreck 20% / repair 10%; final layer: elite 100% (2–3 side by side, you fight
+  the one you route into).
+- Distribution constraints (post-roll fixes): ≥1 repair in layers 2–4, forced
+  into a non-elite slot in layers 3–4 if none rolled; ≤1 repair per layer;
+  ≤2 per segment. Elites are uncapped — they are the risk dial.
+- Repair anchor: free full restore (all three layers). Its cost is the node slot
+  itself — a repair taken is a fight's rewards skipped. ISK-priced repair is
+  deliberately deferred to the v0.11 ammo-economy pass.
+- Wreck field: one pre-rolled rollLoot pass against a depth-weighted NPC's
+  lootTable at the node's own depth (patrol single pass, tier gates apply).
+  Ambush chance 25%, pre-rolled at generation: an ambush replaces the salvage
+  with a normal patrol-grade fight at node depth (full bounty/SP/loot on win —
+  the wreck was bait).
+- Retreat (ALIGN & WARP): 8.0s align (ALIGN_TIME, BattleScene), fully vulnerable,
+  modules stay online, no capacitor gate, cancellable. Cost = the node's bounty +
+  SP + salvage forfeited, node closed for the segment, possible early segment end
+  (no depth advance). No extra penalty valve in v0.9 — webs making the 8s lethal
+  up close is the intended counterplay. If "always retreat" dominates ranged
+  fights in play, candidate valves (weapons offline while aligning, or a large
+  capacitor activation cost) go in before any number changes.
+- Insurance (platinum only): premium = 30% of hull price, payout = 100% of hull
+  price on destruction, fittings never covered. One policy at a time, bound to
+  the boarded hull; switching hulls voids it without refund; consumed on payout.
+  Net insured loss = 30% hull + full fit ≈ 2–4 patrol bounties — smoothed, still
+  sharp. Payout lands before the free-Incursus soft-lock check.
+- HP persists across nodes within a segment; capacitor refills every fight. Run
+  state (map/position/HP) is deliberately not persisted: a refresh is a voluntary
+  dock-out — banked ISK/SP/loot keep (they settle per node), the segment is lost.
+
 ## Skill defaults
 
 Two different skill families, two different starting levels:

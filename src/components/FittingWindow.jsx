@@ -6,7 +6,7 @@ import { SHIPS } from '../data/ships';
 import './FittingWindow.css';
 
 export default function FittingWindow() {
-  const { activeShip, inventory, skills, ownedShips, fitModule, unfitModule, switchShip } = useGameStore();
+  const { isk, activeShip, inventory, skills, ownedShips, insurance, fitModule, unfitModule, switchShip, buyInsurance } = useGameStore();
 
   // Single source of truth for stats: this is the same function fitModule's
   // validation and BattleScene's combat init use, so what's shown here is
@@ -17,6 +17,8 @@ export default function FittingWindow() {
   );
 
   const distinctOwned = [...new Set(ownedShips)];
+  const insurancePremium = activeShip ? Math.round(SHIPS[activeShip.id].price * 0.3) : 0;
+  const isInsured = activeShip && insurance?.shipId === activeShip.id;
 
   // Podded: no hull to fit — offer boarding or point to the market
   if (!activeShip) {
@@ -164,6 +166,18 @@ export default function FittingWindow() {
           <div className="center-ship-info">
             <h2>{activeShip.name}</h2>
             <p>{activeShip.faction} {activeShip.class}</p>
+            {isInsured ? (
+              <p style={{ color: '#2cd67c', fontSize: '0.75rem', marginTop: '0.5rem' }}>
+                ✓ Insured — pays {SHIPS[activeShip.id].price.toLocaleString()} ISK on loss
+              </p>
+            ) : (
+              <button
+                onClick={buyInsurance}
+                disabled={isk < insurancePremium}
+                style={{ fontSize: '0.7rem', marginTop: '0.5rem', opacity: isk < insurancePremium ? 0.4 : 1 }}>
+                Insure hull — {insurancePremium.toLocaleString()} ISK (pays {SHIPS[activeShip.id].price.toLocaleString()} on loss)
+              </button>
+            )}
           </div>
           
           {renderSlotNodes('high', activeShip.slots.high)}

@@ -4,6 +4,7 @@ import { SHIPS } from '../data/ships';
 import { MODULES } from '../data/modules';
 import { getEffectiveStats, skillMult } from '../lib/shipStats';
 import { meetsRequiredSkills, describeRequiredSkills } from '../data/skills';
+import { SEGMENT_LAYERS } from '../lib/runmap';
 
 export { skillMult };
 
@@ -62,7 +63,11 @@ const initialState = () => ({
   // Hulls the player owns (ids; duplicates allowed) and the one currently boarded.
   // activeShip is null between losing a ship and boarding the next one.
   ownedShips: ['incursus'],
-  activeShip: freshShip('incursus')
+  activeShip: freshShip('incursus'),
+
+  // One-time hull insurance policy: { shipId } | null. Bound to the boarded
+  // hull — switching/losing it clears the policy (see switchShip/shipDestroyed).
+  insurance: null
 });
 
 // The save file stores content ids, not objects, so balance changes in
@@ -77,7 +82,10 @@ export const useGameStore = create(persist((set) => ({
   // Actions
   addIsk: (amount) => set(state => ({ isk: state.isk + amount })),
   addSp: (amount) => set(state => ({ sp: state.sp + amount })),
-  advanceDepth: () => set(state => ({ deadspaceDepth: state.deadspaceDepth + 1 })),
+  // The only way depth advances (v0.9): a full segment (SEGMENT_LAYERS deep),
+  // not each individual victory. Retreat dead-ends, ABORT & DOCK, and page
+  // refresh all leave depth at the segment's start.
+  advanceSegment: () => set(state => ({ deadspaceDepth: state.deadspaceDepth + SEGMENT_LAYERS })),
   // Combat loot (see src/lib/loot.js rollLoot) — unknown ids are silently
   // dropped, same tolerance fromIds already gives save-file rehydration.
   addLoot: (moduleIds) => set(state => ({ inventory: [...state.inventory, ...fromIds(moduleIds)] })),
@@ -148,33 +156,52 @@ export const useGameStore = create(persist((set) => ({
         ]
       : [];
     return {
+      // Boarding another hull voids any policy on the old one — no refund.
       inventory: [...state.inventory, ...stripped],
-      activeShip: freshShip(shipId)
+      activeShip: freshShip(shipId),
+      insurance: null
     };
   }),
 
   // Ship blown up in deadspace: the hull and its fitted modules are lost,
   // the run resets to depth 1. Hangar inventory and ISK survive with the pod.
-  // Insurance clause: a player with no hull and no money for one gets a free
-  // Incursus so the game can never soft-lock.
+  // Insurance payout (if the lost hull was covered) lands first; the
+  // free-Incursus soft-lock check is evaluated against the post-payout ISK.
   shipDestroyed: () => set(state => {
     const owned = [...state.ownedShips];
     if (state.activeShip) {
       const idx = owned.indexOf(state.activeShip.id);
       if (idx > -1) owned.splice(idx, 1);
     }
-    if (owned.length === 0 && state.isk < cheapestShipPrice()) {
+    const payout = (state.insurance && state.insurance.shipId === state.activeShip?.id)
+      ? (SHIPS[state.insurance.shipId]?.price || 0)
+      : 0;
+    const isk = state.isk + payout;
+    if (owned.length === 0 && isk < cheapestShipPrice()) {
       return {
+        isk,
         deadspaceDepth: 1,
         ownedShips: ['incursus'],
-        activeShip: freshShip('incursus')
+        activeShip: freshShip('incursus'),
+        insurance: null
       };
     }
     return {
+      isk,
       deadspaceDepth: 1,
       ownedShips: owned,
-      activeShip: null
+      activeShip: null,
+      insurance: null
     };
+  }),
+  // One-time policy on the boarded hull: premium = 30% of hull price, payout
+  // = 100% on loss (fittings never covered). Podded / already-insured /
+  // insufficient-ISK all silently no-op (mirrors buyModule/buyShip's pattern).
+  buyInsurance: () => set(state => {
+    if (!state.activeShip || state.insurance) return state;
+    const premium = Math.round(SHIPS[state.activeShip.id].price * 0.3);
+    if (state.isk < premium) return state;
+    return { isk: state.isk - premium, insurance: { shipId: state.activeShip.id } };
   }),
   // Wipe the save and start over (station Reset Progress button).
   resetProgress: () => set(initialState()),
@@ -279,7 +306,8 @@ export const useGameStore = create(persist((set) => ({
             low: toIds(state.activeShip.fittedModules.low)
           }
         }
-      : null
+      : null,
+    insurance: state.insurance
   }),
   // Called on version mismatch only. Known older versions are upgraded;
   // anything else is discarded (merge then falls back to a fresh start).
@@ -317,6 +345,14 @@ export const useGameStore = create(persist((set) => ({
         activeShip = freshShip('incursus');
       }
 
+      // Insurance invariant (non-null => shipId === boarded hull): re-checked
+      // here in case a hand-edited save breaks it. Unknown shipId, or a
+      // shipId that no longer matches the boarded hull, both fall back to null.
+      const insuredId = persisted.insurance?.shipId;
+      const insurance = (insuredId && SHIPS[insuredId] && activeShip?.id === insuredId)
+        ? { shipId: insuredId }
+        : null;
+
       return {
         ...current,
         isk,
@@ -328,7 +364,8 @@ export const useGameStore = create(persist((set) => ({
         deadspaceDepth: Number.isFinite(persisted.deadspaceDepth) ? persisted.deadspaceDepth : current.deadspaceDepth,
         inventory: fromIds(persisted.inventory),
         ownedShips,
-        activeShip
+        activeShip,
+        insurance
       };
     } catch (err) {
       console.warn('EVE Rogue: unreadable save discarded', err);

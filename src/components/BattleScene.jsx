@@ -3,7 +3,7 @@ import { Canvas, useFrame } from '@react-three/fiber';
 import { OrbitControls, Stars, Grid } from '@react-three/drei';
 import { useGameStore } from '../store/gameStore';
 import { rollEncounter } from '../data/npcs';
-import { getCapacitorRecharge, rollTurretShot, applyDamage, desiredVelocity, applyInertia } from '../lib/combat';
+import { getCapacitorRecharge, rollTurretShot, applyDamage, desiredVelocity, applyInertia, resumeHp } from '../lib/combat';
 import { getEffectiveStats, activeModules } from '../lib/shipStats';
 import { rollLoot } from '../lib/loot';
 import { MODULES } from '../data/modules';
@@ -16,6 +16,7 @@ const UP = new THREE.Vector3(0, 1, 0);
 const PLAYER_SPAWN = [-2, 0, 0];
 const ENEMY_SPAWN = [2, 0, 0];
 const MAX_DT = 0.1; // clamp frame delta so tab switches don't teleport ships
+const ALIGN_TIME = 8.0; // seconds to align & warp out (FR-4 retreat)
 
 function formatDistance(km) {
   return km < 10 ? `${Math.round(km * 1000).toLocaleString()} m` : `${km.toFixed(1)} km`;
@@ -74,14 +75,18 @@ function HudBar({ label, value, max, color }) {
   );
 }
 
-export default function BattleScene({ encounter, nodeType = 'patrol', onVictory, onDefeat }) {
-  const { activeShip, skills, deadspaceDepth, addIsk, addSp, addLoot, advanceDepth, shipDestroyed } = useGameStore();
+export default function BattleScene({ encounter, nodeType = 'patrol', depth, initialHp, introLog, isFinalNode = false, onVictory, onRetreat, onDefeat }) {
+  const { activeShip, skills, deadspaceDepth, addIsk, addSp, addLoot, shipDestroyed } = useGameStore();
+
+  // depth is the node's own depth (segment start + layer index); the store's
+  // deadspaceDepth is only a fallback for direct entry with no map/node context.
+  const effDepth = depth ?? deadspaceDepth;
 
   // Encounters are pre-generated on the map (what you scan is what you fight);
   // the roll here is only a fallback for direct entry.
   const enemy = useMemo(
-    () => encounter ?? rollEncounter(deadspaceDepth, nodeType),
-    [encounter, deadspaceDepth, nodeType]
+    () => encounter ?? rollEncounter(effDepth, nodeType),
+    [encounter, effDepth, nodeType]
   );
 
   // Single source of truth for stats: base hull + passive modifiers + skills.
@@ -91,11 +96,16 @@ export default function BattleScene({ encounter, nodeType = 'patrol', onVictory,
     [activeShip, skills]
   );
 
+  // HP persists across nodes within a segment (v0.9): a null initialHp means
+  // a fresh full-health entry; a snapshot resumes at its (clamped) value.
+  // Capacitor is never part of the snapshot — it refills every fight (FR-3).
+  const resumedHp = resumeHp(initialHp, eff.defense);
+
   // Local React State for UI (synced periodically from the sim refs)
   const [playerHud, setPlayerHud] = useState({
-    shield: eff.defense.shield.hp,
-    armor: eff.defense.armor.hp,
-    hull: eff.defense.hull.hp,
+    shield: resumedHp.shield,
+    armor: resumedHp.armor,
+    hull: resumedHp.hull,
     cap: eff.resources.cap_capacity
   });
   const [enemyHud, setEnemyHud] = useState({
@@ -106,9 +116,10 @@ export default function BattleScene({ encounter, nodeType = 'patrol', onVictory,
   const [distance, setDistance] = useState(4);
   const [speed, setSpeed] = useState(0); // m/s
   const [command, setCommand] = useState({ type: 'stop', radius: 0 });
-  const [combatLog, setCombatLog] = useState(["Gate activation complete. Hostile on scan."]);
-  const [outcome, setOutcome] = useState(null); // null | 'victory' | 'defeat'
+  const [combatLog, setCombatLog] = useState([introLog || "Gate activation complete. Hostile on scan."]);
+  const [outcome, setOutcome] = useState(null); // null | 'victory' | 'defeat' | 'retreat'
   const [lootIds, setLootIds] = useState([]); // module ids rolled on victory
+  const [alignHud, setAlignHud] = useState(null); // null | seconds remaining (ALIGN & WARP)
   const [, setForceRender] = useState(0);
 
   // Physics Refs — all simulation state lives here and is mutated every frame
@@ -120,9 +131,9 @@ export default function BattleScene({ encounter, nodeType = 'patrol', onVictory,
   const enemyRot = useRef(-Math.PI / 2);
   const capRef = useRef(eff.resources.cap_capacity);
   const playerHp = useRef({
-    shield: eff.defense.shield.hp,
-    armor: eff.defense.armor.hp,
-    hull: eff.defense.hull.hp
+    shield: resumedHp.shield,
+    armor: resumedHp.armor,
+    hull: resumedHp.hull
   });
   const enemyHp = useRef({
     shield: enemy.defense.shield.hp,
@@ -132,6 +143,7 @@ export default function BattleScene({ encounter, nodeType = 'patrol', onVictory,
   const enemyWeaponTimer = useRef(1.5); // grace period before the first volley
   const angularVelocity = useRef(0);
   const battleOverRef = useRef(false);
+  const alignRef = useRef(null); // null | seconds remaining until warp-out
   const commandRef = useRef({ type: 'stop', radius: 0 });
   const lastTime = useRef(performance.now());
   const hudAccumulator = useRef(0);
@@ -163,6 +175,23 @@ export default function BattleScene({ encounter, nodeType = 'patrol', onVictory,
     setForceRender(Date.now());
   };
 
+  // ALIGN & WARP (FR-4): an 8s align that ends the battle as a third outcome
+  // alongside victory/defeat. No safety valve — modules and enemy AI keep
+  // running normally, so a web makes this lethal up close (intended).
+  const startAlign = () => {
+    if (battleOverRef.current || alignRef.current != null) return;
+    alignRef.current = ALIGN_TIME;
+    setAlignHud(ALIGN_TIME);
+    addLog('Aligning for warp-out...');
+  };
+
+  const cancelAlign = () => {
+    if (battleOverRef.current || alignRef.current == null) return;
+    alignRef.current = null;
+    setAlignHud(null);
+    addLog('Align aborted.');
+  };
+
   const syncHud = (dist) => {
     setPlayerHud({
       shield: playerHp.current.shield,
@@ -173,6 +202,7 @@ export default function BattleScene({ encounter, nodeType = 'patrol', onVictory,
     setEnemyHud({ ...enemyHp.current });
     setDistance(dist);
     setSpeed(playerVel.current.length() * 1000);
+    setAlignHud(alignRef.current);
   };
 
   const endBattle = (result) => {
@@ -180,10 +210,10 @@ export default function BattleScene({ encounter, nodeType = 'patrol', onVictory,
     modulesStateRef.current.forEach(m => { m.active = false; });
     playerVel.current.set(0, 0, 0);
     enemyVel.current.set(0, 0, 0);
-    addLog(result === 'victory' ? 'Target destroyed!' : 'Hull breach — your ship is lost!');
+    addLog(result === 'victory' ? 'Target destroyed!' : result === 'retreat' ? 'Align complete — warping out.' : 'Hull breach — your ship is lost!');
     // Rolled here (battle-result time), not on the button click, so
     // dismissing/reopening the modal can't re-roll the wreck.
-    if (result === 'victory') setLootIds(rollLoot(enemy, deadspaceDepth, nodeType));
+    if (result === 'victory') setLootIds(rollLoot(enemy, effDepth, nodeType));
     syncHud(playerPos.current.distanceTo(enemyPos.current));
     setOutcome(result);
   };
@@ -308,6 +338,17 @@ export default function BattleScene({ encounter, nodeType = 'patrol', onVictory,
       return;
     }
 
+    // Retreat countdown: the only new simulation logic ALIGN & WARP adds.
+    // Placed after both hull-zero checks above so a same-frame race resolves
+    // in favor of victory/defeat (their early return already fired by now).
+    if (alignRef.current != null) {
+      alignRef.current -= dt;
+      if (alignRef.current <= 0) {
+        endBattle('retreat');
+        return;
+      }
+    }
+
     // 4. Movement: velocity eases toward each command's desired vector (inertia)
     const desiredPlayer = desiredVelocity(commandRef.current, dirToEnemy, dist, playerMaxSpeed);
     applyInertia(playerVel.current, desiredPlayer, dt, eff.mobility.agility);
@@ -377,10 +418,9 @@ export default function BattleScene({ encounter, nodeType = 'patrol', onVictory,
               addIsk(enemy.reward);
               addSp(enemy.spReward);
               addLoot(lootIds);
-              advanceDepth();
-              onVictory();
+              onVictory({ ...playerHp.current });
             }} style={{ background: '#2cd67c', color: '#000', border: 'none', padding: '1rem 2rem', fontWeight: 'bold' }}>
-              Loot Wreck & Take Gate
+              {isFinalNode ? 'Loot Wreck & Dock' : 'Loot Wreck & Take Gate'}
             </button>
           </div>
         </div>
@@ -405,6 +445,21 @@ export default function BattleScene({ encounter, nodeType = 'patrol', onVictory,
         </div>
       )}
 
+      {/* RETREAT MODAL */}
+      {outcome === 'retreat' && (
+        <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', background: 'rgba(20,16,5,0.95)', border: '1px solid #e8a838', padding: '3rem', borderRadius: '8px', zIndex: 100, textAlign: 'center', boxShadow: '0 0 50px rgba(232, 168, 56, 0.2)' }}>
+          <h2 style={{ color: '#e8a838', fontSize: '2rem', marginBottom: '1rem', fontFamily: 'var(--font-display)' }}>WARP OUT</h2>
+          <p style={{ color: 'var(--color-text-muted)', marginBottom: '2rem', maxWidth: '380px' }}>
+            Engagement abandoned. Bounty, SP and salvage forfeited; the site is lost for this dive.
+          </p>
+          <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center' }}>
+            <button onClick={() => onRetreat({ ...playerHp.current })} style={{ background: '#e8a838', color: '#000', border: 'none', padding: '1rem 2rem', fontWeight: 'bold' }}>
+              Return to Map
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* TACTICAL COMMANDS */}
       <div style={{ position: 'absolute', top: '100px', left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: '0.5rem', zIndex: 20 }}>
         <button onClick={() => issueCommand({ type: 'approach', radius: 0 })} style={cmdStyle('approach')}>Approach</button>
@@ -412,10 +467,14 @@ export default function BattleScene({ encounter, nodeType = 'patrol', onVictory,
         <button onClick={() => issueCommand({ type: 'orbit', radius: 5 })} style={cmdStyle('orbit', 5)}>Orbit 5km</button>
         <button onClick={() => issueCommand({ type: 'keepAtRange', radius: 7 })} style={cmdStyle('keepAtRange', 7)}>Keep Range 7km</button>
         <button onClick={() => issueCommand({ type: 'stop', radius: 0 })} style={cmdStyle('stop')}>Stop</button>
+        <button onClick={() => (alignRef.current != null ? cancelAlign() : startAlign())} style={{ borderColor: '#e8a838', color: '#e8a838', marginLeft: '1rem' }}>
+          {alignHud != null ? 'CANCEL ALIGN' : 'ALIGN & WARP'}
+        </button>
       </div>
       <div style={{ position: 'absolute', top: '150px', left: '50%', transform: 'translateX(-50%)', color: '#fff', fontSize: '1.1rem', fontFamily: 'var(--font-display)', textShadow: '0 0 10px #fff', zIndex: 20, display: 'flex', gap: '2rem' }}>
         <span>Distance: {formatDistance(distance)}</span>
         <span>Speed: {Math.round(speed)} m/s</span>
+        {alignHud != null && <span style={{ color: '#e8a838' }}>WARPING IN {Math.ceil(alignHud)}s</span>}
       </div>
 
       {/* COMBAT LOG */}

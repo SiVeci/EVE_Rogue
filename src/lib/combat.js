@@ -67,3 +67,18 @@ export function applyInertia(vel, desired, dt, agility) {
   const blend = 1 - Math.exp(-dt / Math.max(0.1, agility));
   vel.lerp(desired, blend);
 }
+
+// Segment HP persistence (v0.9): null snapshot = fresh full-health entry;
+// an existing snapshot is clamped to the current effective max as a
+// defensive measure (the segment's max HP is otherwise constant, so this
+// only guards hand-built/corrupt input, not normal play).
+export function resumeHp(snapshot, defense) {
+  if (!snapshot) {
+    return { shield: defense.shield.hp, armor: defense.armor.hp, hull: defense.hull.hp };
+  }
+  return {
+    shield: Math.min(snapshot.shield, defense.shield.hp),
+    armor: Math.min(snapshot.armor, defense.armor.hp),
+    hull: Math.min(snapshot.hull, defense.hull.hp)
+  };
+}
