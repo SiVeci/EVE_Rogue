@@ -22,6 +22,8 @@ export const NPCS = {
       base_speed: 240, // m/s — slower than player frigates so brawlers can close in
       agility: 3.0
     },
+    cap_capacity: 220, // GJ — v0.10; rocket launchers are cap-free (cap_use 0), so this NPC is immune to neut suppression
+    cap_recharge: 150, // seconds to full
     ai: {
       orbitRange: 2.5 // km, preferred engagement orbit
     },
@@ -31,7 +33,10 @@ export const NPCS = {
       stats: {
         range: 8500, // m
         rof: 3.0,
-        damage: { em: 0, th: 0, kin: 12, exp: 0 }
+        damage: { em: 0, th: 0, kin: 12, exp: 0 },
+        cap_use: 0,
+        explosion_radius: 35, // m — v0.10, calibrated against smallest player sig (Atron 35)
+        explosion_velocity: 150 // m/s
       }
     },
     lootTable: [
@@ -61,6 +66,8 @@ export const NPCS = {
       base_speed: 350,
       agility: 2.6
     },
+    cap_capacity: 240, // GJ — v0.10
+    cap_recharge: 130,
     ai: {
       orbitRange: 1.0
     },
@@ -72,7 +79,8 @@ export const NPCS = {
         falloff: 2000,
         tracking: 280,
         rof: 3.0,
-        damage: { em: 0, th: 9, kin: 9, exp: 0 }
+        damage: { em: 0, th: 9, kin: 9, exp: 0 },
+        cap_use: 9
       }
     },
     lootTable: [
@@ -103,6 +111,8 @@ export const NPCS = {
       base_speed: 220,
       agility: 3.5
     },
+    cap_capacity: 230, // GJ — v0.10
+    cap_recharge: 135,
     ai: {
       orbitRange: 15
     },
@@ -114,7 +124,8 @@ export const NPCS = {
         falloff: 5000,
         tracking: 35,
         rof: 4.5,
-        damage: { em: 0, th: 7, kin: 7, exp: 0 }
+        damage: { em: 0, th: 7, kin: 7, exp: 0 },
+        cap_use: 12
       }
     },
     lootTable: [
@@ -144,6 +155,8 @@ export const NPCS = {
       base_speed: 330,
       agility: 2.8
     },
+    cap_capacity: 220, // GJ — v0.10
+    cap_recharge: 145,
     ai: {
       orbitRange: 2.5
     },
@@ -153,12 +166,17 @@ export const NPCS = {
       stats: {
         range: 9000,
         rof: 3.5,
-        damage: { em: 0, th: 0, kin: 6, exp: 10 }
+        damage: { em: 0, th: 0, kin: 6, exp: 10 },
+        cap_use: 0,
+        explosion_radius: 35,
+        explosion_velocity: 150
       }
     },
     ewar: {
       optimal: 10000, // m
-      speed_reduction_pct: 50
+      speed_reduction_pct: 50,
+      activation_time: 5.0,
+      cap_use: 10
     },
     lootTable: [
       { moduleId: 'fleeting_compact_stasis_webifier', chance: 0.17 },
@@ -186,6 +204,8 @@ export const NPCS = {
       base_speed: 260,
       agility: 3.2
     },
+    cap_capacity: 235, // GJ — v0.10
+    cap_recharge: 140,
     ai: {
       orbitRange: 6
     },
@@ -197,14 +217,16 @@ export const NPCS = {
         falloff: 2500,
         tracking: 150,
         rof: 3.5,
-        damage: { em: 6, th: 6, kin: 0, exp: 0 }
+        damage: { em: 6, th: 6, kin: 0, exp: 0 },
+        cap_use: 9
       }
     },
     lootTable: [
       { moduleId: 'light_ion_blaster_i', chance: 0.12 },
       { moduleId: 'energized_adaptive_nano_membrane_i', chance: 0.10 },
       { moduleId: 'stasis_webifier_i', chance: 0.08 },
-      { moduleId: 'magnetic_field_stabilizer_ii', chance: 0.06 }
+      { moduleId: 'magnetic_field_stabilizer_ii', chance: 0.06 },
+      { moduleId: 'small_infectious_scoped_energy_neutralizer', chance: 0.07 }
     ],
     baseReward: 19000
   },
@@ -226,6 +248,8 @@ export const NPCS = {
       base_speed: 340,
       agility: 2.5
     },
+    cap_capacity: 250, // GJ — v0.10
+    cap_recharge: 125,
     ai: {
       orbitRange: 1.2
     },
@@ -237,14 +261,16 @@ export const NPCS = {
         falloff: 1800,
         tracking: 260,
         rof: 2.8,
-        damage: { em: 8, th: 8, kin: 0, exp: 0 }
+        damage: { em: 8, th: 8, kin: 0, exp: 0 },
+        cap_use: 9
       }
     },
     lootTable: [
       { moduleId: 'light_electron_blaster_i', chance: 0.12 },
       { moduleId: 'small_acm_compact_armor_repairer', chance: 0.10 },
       { moduleId: 'energized_adaptive_nano_membrane_i', chance: 0.09 },
-      { moduleId: 'mn1_afterburner_ii', chance: 0.06 }
+      { moduleId: 'mn1_afterburner_ii', chance: 0.06 },
+      { moduleId: 'small_infectious_scoped_energy_neutralizer', chance: 0.06 }
     ],
     baseReward: 21000
   },
@@ -265,6 +291,8 @@ export const NPCS = {
       base_speed: 300,
       agility: 3.0
     },
+    cap_capacity: 270, // GJ — v0.10
+    cap_recharge: 120,
     ai: {
       orbitRange: 2.0
     },
@@ -276,12 +304,15 @@ export const NPCS = {
         falloff: 2200,
         tracking: 220,
         rof: 3.2,
-        damage: { em: 0, th: 8, kin: 7, exp: 0 }
+        damage: { em: 0, th: 8, kin: 7, exp: 0 },
+        cap_use: 8
       }
     },
     ewar: {
       optimal: 9000,
-      speed_reduction_pct: 45
+      speed_reduction_pct: 45,
+      activation_time: 5.0,
+      cap_use: 6
     },
     lootTable: [
       { moduleId: 'fleeting_compact_stasis_webifier', chance: 0.12 },
@@ -309,6 +340,8 @@ export const NPCS = {
       base_speed: 390,
       agility: 2.3
     },
+    cap_capacity: 200, // GJ — v0.10; rocket launcher is cap-free, so this NPC is immune to neut suppression
+    cap_recharge: 140,
     ai: {
       orbitRange: 1.0
     },
@@ -318,7 +351,10 @@ export const NPCS = {
       stats: {
         range: 7500,
         rof: 3.0,
-        damage: { em: 0, th: 0, kin: 7, exp: 9 }
+        damage: { em: 0, th: 0, kin: 7, exp: 9 },
+        cap_use: 0,
+        explosion_radius: 35,
+        explosion_velocity: 150
       }
     },
     lootTable: [

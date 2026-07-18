@@ -132,6 +132,51 @@ retroactively changed" rule below — everything else still holds.
   state (map/position/HP) is deliberately not persisted: a refresh is a voluntary
   dock-out — banked ISK/SP/loot keep (they settle per node), the segment is lost.
 
+## Combat fidelity (new in v0.10)
+
+- Missile damage factor (missileDamageFactor, src/lib/combat.js):
+  `min(1, (sig/expR) × min(1, expV/v)^drf)`, drf = 0.5 (MISSILE_DRF). The drf
+  exponent applies to the velocity ratio only, so MWD's equal sig/speed
+  multipliers net out in the player's favor (bloom restores full damage).
+  Tuning: RAISING drf deepens the speed defense; lowering flattens it (note:
+  the v0.10 PRD's risk section has this direction inverted).
+- NPC missile calibration: explosion_radius 35 / explosion_velocity 150 on all
+  rocket NPCs — expR equals the smallest player sig (Atron 35), so a stationary
+  target of any hull takes exactly full damage; only genuinely fast AND small
+  ships earn a discount (Atron at 400 m/s: ×0.61). Player launchers keep their
+  v0.1 fields (rockets 20/150 — effectively never reduced vs 38–42m NPC sigs;
+  light missiles 40/170 — reduced vs fast orbiters, webs restore application).
+- NPC capacitor: cap_capacity / cap_recharge per NPC, weapon stats.cap_use
+  (missiles 0 — launchers are cap-free on both sides), ewar cap_use +
+  activation_time 5.0. Recharge reuses getCapacitorRecharge. Invariants:
+  peak recharge (2.5 × cap/T) ≥ 1.45 × standing consumption (cap never sags
+  toward the floor without a neut — the zero-diff guarantee); T1 neut drain
+  (10 GJ/s) > every NPC's peak recharge (suppression always converges);
+  cap_recharge > 90 s (regen between 5 s neut cycles stays under the floor —
+  hard shutdown is structural, not tuned). Cap is NOT scaled by depth/elite
+  (same rule as EWAR strength).
+- NPC activation floor: weapons/ewar with cap_use > 0 fire only at
+  cap ≥ max(cap_use, 10% × cap_capacity) (NPC_CAP_FLOOR_RATIO). Below it they
+  stop entirely and resume once recharge crosses back — the hysteresis exists
+  because an NPC can't re-toggle modules; player modules keep their exact-cost
+  semantics.
+- Energy neutralizer: Small Energy Neutralizer I (T1, market, 12,000 ISK,
+  50 GJ per 5 s, optimal 6 km, self cost 25 cap/cycle) · Small Infectious
+  Scoped Energy Neutralizer (Meta, loot-only via both Sansha tables, 18,000,
+  55 GJ, 7.5 km). One T1 neut caps out a Serpentis Scout from full in ~25 s
+  (double-neut destroyer ~13 s), recovery ~6–10 s after the neut stops. Rocket
+  NPCs' weapons are immune (cap_use 0); Angel Webber's web is not. Tuning
+  lever if too strong: neut_amount only.
+- Damage bleed-through: applyDamage carries a broken layer's overflow into the
+  next layer at that layer's own resists, capped at one layer per volley.
+  Return shape { layer, dmg } unchanged (layer = first layer hit, dmg = total).
+- Stacking penalty (stackingPenalty, src/lib/shipStats.js): i-th module mult
+  on the same stat (sorted by magnitude, descending; bonuses and maluses in
+  separate groups) keeps 0.5^((i/2.22292081)^2) of its bonus: 100% / 86.9% /
+  57.1% / 28.3% / 10.6%. Exempt: skill multipliers, all `add` modifiers.
+  2× MFS I = ×1.1956 (was 1.21), 3× = ×1.2638 (was 1.331) — the second copy
+  still pays, the third is the real diminishing step.
+
 ## Skill defaults
 
 Two different skill families, two different starting levels:

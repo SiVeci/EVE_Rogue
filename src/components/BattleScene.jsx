@@ -3,7 +3,7 @@ import { Canvas, useFrame } from '@react-three/fiber';
 import { OrbitControls, Stars, Grid } from '@react-three/drei';
 import { useGameStore } from '../store/gameStore';
 import { rollEncounter } from '../data/npcs';
-import { getCapacitorRecharge, rollTurretShot, applyDamage, desiredVelocity, applyInertia, resumeHp } from '../lib/combat';
+import { getCapacitorRecharge, rollTurretShot, applyDamage, desiredVelocity, applyInertia, resumeHp, missileDamageFactor, npcActivationFloor } from '../lib/combat';
 import { getEffectiveStats, activeModules } from '../lib/shipStats';
 import { rollLoot } from '../lib/loot';
 import { MODULES } from '../data/modules';
@@ -111,7 +111,8 @@ export default function BattleScene({ encounter, nodeType = 'patrol', depth, ini
   const [enemyHud, setEnemyHud] = useState({
     shield: enemy.defense.shield.hp,
     armor: enemy.defense.armor.hp,
-    hull: enemy.defense.hull.hp
+    hull: enemy.defense.hull.hp,
+    cap: enemy.cap_capacity ?? null
   });
   const [distance, setDistance] = useState(4);
   const [speed, setSpeed] = useState(0); // m/s
@@ -141,6 +142,14 @@ export default function BattleScene({ encounter, nodeType = 'patrol', depth, ini
     hull: enemy.defense.hull.hp
   });
   const enemyWeaponTimer = useRef(1.5); // grace period before the first volley
+  // NPC capacitor (v0.10): mounts full every fight (same semantics as the
+  // player's capRef, never part of the HP snapshot). Infinity is the
+  // documented fallback for any NPC without cap fields — the suppression
+  // check below is guarded so it never fires against an Infinity pool.
+  const enemyCapRef = useRef(enemy.cap_capacity ?? Infinity);
+  const enemyWeaponPoweredRef = useRef(true); // drives the powers-down/back-online log transitions
+  const enemyEwarTimer = useRef(0); // enemy ewar activation cadence, mirrors the player module loop
+  const enemyEwarPoweredRef = useRef(true);
   const angularVelocity = useRef(0);
   const battleOverRef = useRef(false);
   const alignRef = useRef(null); // null | seconds remaining until warp-out
@@ -199,7 +208,7 @@ export default function BattleScene({ encounter, nodeType = 'patrol', depth, ini
       hull: playerHp.current.hull,
       cap: Math.floor(capRef.current)
     });
-    setEnemyHud({ ...enemyHp.current });
+    setEnemyHud({ ...enemyHp.current, cap: enemy.cap_capacity ? Math.floor(enemyCapRef.current) : null });
     setDistance(dist);
     setSpeed(playerVel.current.length() * 1000);
     setAlignHud(alignRef.current);
@@ -263,6 +272,12 @@ export default function BattleScene({ encounter, nodeType = 'patrol', depth, ini
         return;
       }
 
+      // Energy neutralizers hold the same way until the target is in range
+      if (mod.type === 'energy_neut' && distMeters > mod.stats.optimal) {
+        mod.timer = 0.5;
+        return;
+      }
+
       if (capRef.current < (mod.cost.cap || 0)) {
         mod.active = false;
         addLog(`[${mod.name}] Deactivated: Capacitor depleted!`);
@@ -281,12 +296,21 @@ export default function BattleScene({ encounter, nodeType = 'patrol', depth, ini
           addLog(`[${mod.name}] Misses!`);
         }
       } else if (mod.type === 'missile_weapon') {
-        const { dmg } = applyDamage(enemyHp.current, enemy.defense, mod.stats.damage, eff.damageMult.missile_weapon);
+        // FR-1: enemy speed/signature (MWD has no analogue on NPCs) feed the
+        // same missileDamageFactor the enemy's own missiles use against us.
+        const factor = missileDamageFactor(enemy.defense.sig_radius, enemyVel.current.length() * 1000, mod.stats.explosion_radius, mod.stats.explosion_velocity);
+        const { dmg } = applyDamage(enemyHp.current, enemy.defense, mod.stats.damage, factor * eff.damageMult.missile_weapon);
         addLog(`[${mod.name}] Hits for ${Math.floor(dmg)} dmg!`);
       } else if (mod.type === 'shield_repair') {
         playerHp.current.shield = Math.min(eff.defense.shield.hp, playerHp.current.shield + mod.stats.shield_bonus);
       } else if (mod.type === 'armor_repair') {
         playerHp.current.armor = Math.min(eff.defense.armor.hp, playerHp.current.armor + mod.stats.armor_bonus);
+      } else if (mod.type === 'energy_neut') {
+        // FR-3: the one new module-type branch this version adds. Burns the
+        // enemy's capacitor directly; suppression is read off the same
+        // enemyCapRef by the enemy AI's activation-floor check below.
+        enemyCapRef.current = Math.max(0, enemyCapRef.current - mod.stats.neut_amount);
+        addLog(`[${mod.name}] drains ${mod.stats.neut_amount} GJ from ${enemy.name}'s capacitor!`);
       }
       // 'ewar' and 'propulsion' cycles only pay capacitor; effects applied above
     });
@@ -298,38 +322,90 @@ export default function BattleScene({ encounter, nodeType = 'patrol', depth, ini
 
     // 3. Enemy AI: orbit the player at preferred range, fire when in range
     const enemyMaxSpeed = (enemy.mobility.base_speed / 1000) * (enemyWebbed ? 0.5 : 1);
+    // MWD signature bloom makes the player both easier to hit and, since it
+    // shares the same variable, the reference target for the enemy's own
+    // missile factor (FR-1's "MWD bloom applies to missiles too").
+    const effectiveSig = eff.defense.sig_radius * playerSigMult;
 
-    // Enemy EWAR: their web slows the player inside its envelope
-    if (enemy.ewar && distMeters <= enemy.ewar.optimal) {
-      playerMaxSpeed *= 1 - enemy.ewar.speed_reduction_pct / 100;
+    // Enemy EWAR (v0.10): pays cap_use every activation_time cycle, gated by
+    // the same activation floor as the weapon below. The web's effect is
+    // still checked every frame by distance — only whether it's *powered*
+    // depends on the cycle/cap check, mirroring the player's own web module.
+    if (enemy.ewar) {
+      enemyEwarTimer.current -= dt;
+      if (enemyEwarTimer.current <= 0) {
+        const ewarCapUse = enemy.ewar.cap_use || 0;
+        const ewarSuppressed = ewarCapUse > 0 && enemy.cap_capacity != null &&
+          enemyCapRef.current < npcActivationFloor(enemy.cap_capacity, ewarCapUse);
+        if (ewarSuppressed) {
+          if (enemyEwarPoweredRef.current) {
+            enemyEwarPoweredRef.current = false;
+            addLog(`${enemy.name}'s electronic warfare systems power down — capacitor drained!`);
+          }
+          enemyEwarTimer.current = 0.5;
+        } else {
+          if (!enemyEwarPoweredRef.current) {
+            enemyEwarPoweredRef.current = true;
+            addLog(`${enemy.name}'s electronic warfare systems back online.`);
+          }
+          enemyEwarTimer.current = enemy.ewar.activation_time || 5.0;
+          enemyCapRef.current -= ewarCapUse;
+        }
+      }
+      // Enemy EWAR: their web slows the player inside its envelope
+      if (enemyEwarPoweredRef.current && distMeters <= enemy.ewar.optimal) {
+        playerMaxSpeed *= 1 - enemy.ewar.speed_reduction_pct / 100;
+      }
     }
 
     enemyWeaponTimer.current -= dt;
     if (enemyWeaponTimer.current <= 0) {
       const weapon = enemy.weapon;
-      if (weapon.type === 'hybrid_weapon') {
-        // Turrets share the player's hit formula, rolled against the player's
-        // effective signature (MWD bloom makes you easier to hit).
-        if (distMeters <= weapon.stats.optimal + 2 * weapon.stats.falloff) {
-          enemyWeaponTimer.current = weapon.stats.rof;
-          const effectiveSig = eff.defense.sig_radius * playerSigMult;
-          const quality = rollTurretShot(distMeters, weapon.stats, effectiveSig, angularVelocity.current);
-          if (quality !== null) {
-            const { dmg, layer } = applyDamage(playerHp.current, eff.defense, weapon.stats.damage, quality);
-            addLog(`${enemy.name} ${quality === 3.0 ? 'WRECKS' : 'hits'} your ${layer} for ${Math.floor(dmg)}!`);
+      const capUse = weapon.stats.cap_use || 0;
+      // Rocket/light-missile NPCs run cap_use 0 (cap-free on both sides, same
+      // as the player's launchers) — they never enter this check, so a neut
+      // build has no weapon-suppression effect against them (FR-2/FR-3).
+      const weaponSuppressed = capUse > 0 && enemy.cap_capacity != null &&
+        enemyCapRef.current < npcActivationFloor(enemy.cap_capacity, capUse);
+
+      if (weaponSuppressed) {
+        if (enemyWeaponPoweredRef.current) {
+          enemyWeaponPoweredRef.current = false;
+          addLog(`${enemy.name}'s weapon systems power down — capacitor drained!`);
+        }
+        enemyWeaponTimer.current = 0.5;
+      } else {
+        if (!enemyWeaponPoweredRef.current) {
+          enemyWeaponPoweredRef.current = true;
+          addLog(`${enemy.name}'s weapon systems back online.`);
+        }
+        if (weapon.type === 'hybrid_weapon') {
+          // Turrets share the player's hit formula, rolled against the player's
+          // effective signature (MWD bloom makes you easier to hit).
+          if (distMeters <= weapon.stats.optimal + 2 * weapon.stats.falloff) {
+            enemyWeaponTimer.current = weapon.stats.rof;
+            enemyCapRef.current -= capUse;
+            const quality = rollTurretShot(distMeters, weapon.stats, effectiveSig, angularVelocity.current);
+            if (quality !== null) {
+              const { dmg, layer } = applyDamage(playerHp.current, eff.defense, weapon.stats.damage, quality);
+              addLog(`${enemy.name} ${quality === 3.0 ? 'WRECKS' : 'hits'} your ${layer} for ${Math.floor(dmg)}!`);
+            } else {
+              addLog(`${enemy.name} misses!`);
+            }
           } else {
-            addLog(`${enemy.name} misses!`);
+            enemyWeaponTimer.current = 0.5;
           }
+        } else if (distMeters <= weapon.stats.range) {
+          // Missiles always hit inside their range; damage scaled by FR-1's
+          // signature/speed factor (MWD bloom on effectiveSig restores it).
+          enemyWeaponTimer.current = weapon.stats.rof;
+          enemyCapRef.current -= capUse;
+          const factor = missileDamageFactor(effectiveSig, playerVel.current.length() * 1000, weapon.stats.explosion_radius, weapon.stats.explosion_velocity);
+          const { dmg, layer } = applyDamage(playerHp.current, eff.defense, weapon.stats.damage, factor);
+          addLog(`${enemy.name} hits your ${layer} for ${Math.floor(dmg)}!`);
         } else {
           enemyWeaponTimer.current = 0.5;
         }
-      } else if (distMeters <= weapon.stats.range) {
-        // Missiles always hit inside their range
-        enemyWeaponTimer.current = weapon.stats.rof;
-        const { dmg, layer } = applyDamage(playerHp.current, eff.defense, weapon.stats.damage);
-        addLog(`${enemy.name} hits your ${layer} for ${Math.floor(dmg)}!`);
-      } else {
-        enemyWeaponTimer.current = 0.5;
       }
     }
 
@@ -365,6 +441,15 @@ export default function BattleScene({ encounter, nodeType = 'patrol', depth, ini
     // 5. Capacitor Recharge
     const capMax = eff.resources.cap_capacity;
     capRef.current = Math.min(capMax, capRef.current + getCapacitorRecharge(capRef.current, capMax, eff.resources.cap_recharge, dt));
+
+    // Enemy capacitor (v0.10) — skipped entirely for the Infinity fallback
+    // (an NPC without cap fields), same recharge curve as the player's.
+    if (enemy.cap_capacity != null) {
+      enemyCapRef.current = Math.min(
+        enemy.cap_capacity,
+        enemyCapRef.current + getCapacitorRecharge(enemyCapRef.current, enemy.cap_capacity, enemy.cap_recharge, dt)
+      );
+    }
 
     // 6. Sync UI a few times per second
     hudAccumulator.current += dt;
@@ -515,6 +600,9 @@ export default function BattleScene({ encounter, nodeType = 'patrol', depth, ini
           <HudBar label="Shield" value={enemyHud.shield} max={enemy.defense.shield.hp} color="var(--color-shield)" />
           <HudBar label="Armor" value={enemyHud.armor} max={enemy.defense.armor.hp} color="var(--color-armor)" />
           <HudBar label="Structure" value={enemyHud.hull} max={enemy.defense.hull.hp} color="var(--color-hull)" />
+          {enemy.cap_capacity != null && (
+            <HudBar label="Capacitor" value={enemyHud.cap} max={enemy.cap_capacity} color="#e8a838" />
+          )}
         </div>
       </div>
     </div>

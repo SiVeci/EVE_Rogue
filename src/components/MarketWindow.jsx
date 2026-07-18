@@ -50,6 +50,7 @@ const keyStats = (m) => {
     case 'armor_repair': return `+${s.armor_bonus} armor / ${s.activation_time}s`;
     case 'propulsion': return `max speed ×${s.speed_multiplier}`;
     case 'ewar': return `target speed −${s.speed_reduction_pct}%`;
+    case 'energy_neut': return `−${s.neut_amount} GJ / ${s.activation_time}s · optimal ${(s.optimal / 1000).toFixed(1)} km`;
     default: return '';
   }
 };

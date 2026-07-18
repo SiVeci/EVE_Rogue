@@ -261,9 +261,18 @@ export const useGameStore = create(persist((set) => ({
 
     // Removing a module can drop PG/CPU capacity below what's still used
     // (e.g. unfitting a Co-Processor while at capacity) — block that rather
-    // than silently leaving the ship over-fit.
+    // than silently leaving the ship over-fit. Exception (v0.10 stacking
+    // penalty): a legacy fit can already be over capacity (a penalized
+    // Co-Processor's capacity boost shrinks below what an old save's fit
+    // uses) — for those, unfitting is allowed as long as it doesn't worsen
+    // the overage, since otherwise no module could ever be removed from it.
+    const currentEff = getEffectiveStats(ship, ship.fittedModules, state.skills);
     const eff = getEffectiveStats(ship, candidateFitted, state.skills);
-    if (eff.used.pg > eff.resources.pg || eff.used.cpu > eff.resources.cpu) {
+    const pgOverageNow = Math.max(0, currentEff.used.pg - currentEff.resources.pg);
+    const cpuOverageNow = Math.max(0, currentEff.used.cpu - currentEff.resources.cpu);
+    const pgOverageAfter = Math.max(0, eff.used.pg - eff.resources.pg);
+    const cpuOverageAfter = Math.max(0, eff.used.cpu - eff.resources.cpu);
+    if (pgOverageAfter > pgOverageNow || cpuOverageAfter > cpuOverageNow) {
       alert(`Cannot unfit ${module.name}: the remaining fit would exceed Powergrid/CPU capacity!`);
       return state;
     }

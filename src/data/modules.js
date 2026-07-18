@@ -178,6 +178,38 @@ export const MODULES = {
     }
   },
 
+  // --- ENERGY WARFARE (High Slots, v0.10) ---
+  small_energy_neutralizer_i: {
+    id: 'small_energy_neutralizer_i',
+    name: 'Small Energy Neutralizer I',
+    type: 'energy_neut',
+    slot: 'high',
+    tier: 'T1',
+    price: 12000,
+    description: 'Projects a destabilizing energy field that burns away the target\'s capacitor. Very heavy capacitor draw.',
+    cost: { pg: 5, cpu: 18, cap: 25 },
+    stats: {
+      activation_time: 5.0,
+      optimal: 6000,
+      neut_amount: 50
+    }
+  },
+  small_infectious_scoped_energy_neutralizer: {
+    id: 'small_infectious_scoped_energy_neutralizer',
+    name: 'Small Infectious Scoped Energy Neutralizer',
+    type: 'energy_neut',
+    slot: 'high',
+    tier: 'Meta',
+    price: 18000,
+    description: 'Refined neutralizer emitter. Longer reach and a harder capacitor burn per cycle.',
+    cost: { pg: 5, cpu: 18, cap: 25 },
+    stats: {
+      activation_time: 5.0,
+      optimal: 7500,
+      neut_amount: 55
+    }
+  },
+
   // --- SHIELD & ARMOR (Mid / Low Slots) ---
   small_shield_booster_i: {
     id: 'small_shield_booster_i',

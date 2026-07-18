@@ -7,6 +7,12 @@
 // Skill bonus multiplier: level 1 is baseline, each level past 1 grants +5%
 export const skillMult = (level) => 1 + 0.05 * (Math.max(1, level) - 1);
 
+// EVE stacking penalty (v0.10): the i-th (0-indexed) module `mult` modifier
+// on the same stat keeps this fraction of its bonus/malus once ranked by
+// magnitude: 1.0000, 0.8691, 0.5706, 0.2830, 0.1060, ... Skill multipliers
+// and `add` modifiers are exempt (see multFactors below).
+export const stackingPenalty = (i) => Math.pow(0.5, Math.pow(i / 2.22292081, 2));
+
 const RESIST_KEYS = ['em', 'th', 'kin', 'exp'];
 const RESIST_CAP = 90;
 
@@ -66,11 +72,11 @@ function applyAdd(eff, stat, value) {
 // Computes a ship's effective stats: base hull values, plus every passive
 // module's modifiers, plus skill bonuses. Order is fixed and documented so
 // results are predictable: all 'add' modifiers apply first, then all 'mult'
-// modifiers — module mults and skill mults combine into a single per-stat
-// factor and apply at once (multiplication is commutative, so this is
-// equivalent to any other mult ordering). Resist modifiers are add-only and
-// capped at 90 after both passes; EVE-style stacking penalties are not
-// modeled.
+// modifiers. Module mults on the same stat go through the EVE stacking
+// penalty (stackingPenalty above, grouped by bonus/malus and ranked by
+// magnitude) before combining with the skill mult, which is exempt and
+// always applies in full. Resist modifiers are add-only and capped at 90
+// after both passes.
 //
 // fittedModules may be a flat array of modules or the { high, mid, low }
 // slot object — callers pass whichever they already have on hand.
@@ -110,6 +116,10 @@ export function getEffectiveStats(ship, fittedModules, skills = {}) {
     'damage.hybrid_weapon': skillMult(skills.gunnery ?? 1),
     'damage.missile_weapon': skillMult(skills.gunnery ?? 1)
   };
+
+  // Module mults are collected per stat first (not applied one-at-a-time)
+  // so the stacking penalty can rank them by magnitude before combining.
+  const moduleMultsByStat = {};
   for (const mod of modifiers) {
     if (mod.op !== 'mult') continue;
     if (RESIST_GROUPS[mod.stat]) {
@@ -120,8 +130,23 @@ export function getEffectiveStats(ship, fittedModules, skills = {}) {
       console.warn(`EVE Rogue: unknown modifier stat "${mod.stat}"`);
       continue;
     }
-    multFactors[mod.stat] = (multFactors[mod.stat] ?? 1) * mod.value;
+    (moduleMultsByStat[mod.stat] ??= []).push(mod.value);
   }
+
+  for (const [stat, values] of Object.entries(moduleMultsByStat)) {
+    // Bonuses (>=1) and maluses (<1) stack in separate groups (EVE semantics:
+    // a positive and a negative mod on the same stat don't compete for rank).
+    // Within a group, the strongest modifier (by |value-1|) applies in full
+    // (rank 0); each subsequent one keeps a shrinking fraction of its own
+    // bonus/malus.
+    const bonuses = values.filter((v) => v >= 1).sort((a, b) => b - a);
+    const maluses = values.filter((v) => v < 1).sort((a, b) => a - b);
+    const groupFactor = (ranked) =>
+      ranked.reduce((acc, v, i) => acc * (1 + (v - 1) * stackingPenalty(i)), 1);
+    const moduleFactor = groupFactor(bonuses) * groupFactor(maluses);
+    multFactors[stat] = (multFactors[stat] ?? 1) * moduleFactor;
+  }
+
   for (const [stat, factor] of Object.entries(multFactors)) {
     const handler = PATH_HANDLERS[stat];
     handler.set(eff, handler.get(eff) * factor);
