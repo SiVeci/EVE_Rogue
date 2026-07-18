@@ -7,6 +7,8 @@ import { getCapacitorRecharge, rollTurretShot, applyDamage, desiredVelocity, app
 import { getEffectiveStats, activeModules } from '../lib/shipStats';
 import { rollLoot } from '../lib/loot';
 import { MODULES } from '../data/modules';
+import { AMMO } from '../data/ammo';
+import { applyAmmoToWeapon, compatibleAmmo } from '../lib/ammo';
 import { TIER_COLORS } from '../lib/tiers';
 import * as THREE from 'three';
 
@@ -17,6 +19,7 @@ const PLAYER_SPAWN = [-2, 0, 0];
 const ENEMY_SPAWN = [2, 0, 0];
 const MAX_DT = 0.1; // clamp frame delta so tab switches don't teleport ships
 const ALIGN_TIME = 8.0; // seconds to align & warp out (FR-4 retreat)
+const RELOAD_TIME = 10.0; // seconds to switch ammo mid-battle (v0.11 FR-4)
 
 function formatDistance(km) {
   return km < 10 ? `${Math.round(km * 1000).toLocaleString()} m` : `${km.toFixed(1)} km`;
@@ -76,7 +79,7 @@ function HudBar({ label, value, max, color }) {
 }
 
 export default function BattleScene({ encounter, nodeType = 'patrol', depth, initialHp, introLog, isFinalNode = false, onVictory, onRetreat, onDefeat }) {
-  const { activeShip, skills, deadspaceDepth, addIsk, addSp, addLoot, shipDestroyed } = useGameStore();
+  const { activeShip, skills, deadspaceDepth, cargo, addIsk, addSp, addLoot, shipDestroyed, settleBattleAmmo } = useGameStore();
 
   // depth is the node's own depth (segment start + layer index); the store's
   // deadspaceDepth is only a fallback for direct entry with no map/node context.
@@ -119,8 +122,17 @@ export default function BattleScene({ encounter, nodeType = 'patrol', depth, ini
   const [command, setCommand] = useState({ type: 'stop', radius: 0 });
   const [combatLog, setCombatLog] = useState([introLog || "Gate activation complete. Hostile on scan."]);
   const [outcome, setOutcome] = useState(null); // null | 'victory' | 'defeat' | 'retreat'
-  const [lootIds, setLootIds] = useState([]); // module ids rolled on victory
+  const [lootIds, setLootIds] = useState([]); // mixed: module id strings and { ammoId, qty } (v0.11)
   const [alignHud, setAlignHud] = useState(null); // null | seconds remaining (ALIGN & WARP)
+  // Per-weapon ammo HUD (v0.11), keyed by modulesStateRef index, synced at the
+  // same 0.15s cadence as the rest of the HUD (see syncHud) — not derived
+  // every render, since the pool/reload live in refs mutated every frame.
+  const [ammoHud, setAmmoHud] = useState({});
+  // Snapshot of ammoUsedRef taken at battle-end, for the victory/retreat
+  // modals' "Expended: ..." line (ammoUsedRef itself keeps accumulating
+  // nothing further once battleOverRef freezes the sim, but a snapshot
+  // avoids relying on ref reads inside JSX).
+  const [consumedSnapshot, setConsumedSnapshot] = useState({});
   const [, setForceRender] = useState(0);
 
   // Physics Refs — all simulation state lives here and is mutated every frame
@@ -160,7 +172,30 @@ export default function BattleScene({ encounter, nodeType = 'patrol', depth, ini
   // Module States Ref (tracks cooldowns and active status independently of React re-renders).
   // Passive modules are excluded: their effects are already baked into `eff`,
   // so they never enter the rack UI or the per-frame processing loop below.
-  const modulesStateRef = useRef(activeModules(activeShip.fittedModules).map(m => ({ ...m, active: false, timer: 0 })));
+  // High-slot entries are built with their index preserved (activeModules()
+  // flattens high/mid/low and loses it) so weapons can carry an ammoId keyed
+  // back to activeShip.ammo (v0.11) — mid/low modules never carry ammo and
+  // don't need the index, so they're appended via the existing helper.
+  const modulesStateRef = useRef([
+    ...activeShip.fittedModules.high
+      .map((m, highIndex) => ({ m, highIndex }))
+      .filter(({ m }) => !m.passive)
+      .map(({ m, highIndex }) => ({
+        ...m,
+        active: false,
+        timer: 0,
+        ...(m.ammoFamily ? { ammoId: activeShip.ammo?.[highIndex] ?? null, highIndex, reload: 0 } : {})
+      })),
+    ...activeModules({ high: [], mid: activeShip.fittedModules.mid, low: activeShip.fittedModules.low })
+      .map(m => ({ ...m, active: false, timer: 0 }))
+  ]);
+  // Ammo cargo snapshot for this fight (FR-4: undocking carries the hangar's
+  // entire cargo automatically) — a shared pool keyed by ammoId, so multiple
+  // weapons of the same round type draw from (and can starve) one another.
+  // ammoUsedRef accumulates the total fired per ammoId for the battle-end
+  // settlement (settleBattleAmmo).
+  const ammoPoolRef = useRef({ ...cargo });
+  const ammoUsedRef = useRef({});
 
   const addLog = (msg) => {
     setCombatLog(prev => [msg, ...prev].slice(0, 6));
@@ -175,6 +210,11 @@ export default function BattleScene({ encounter, nodeType = 'patrol', depth, ini
   const toggleModule = (index) => {
     if (battleOverRef.current) return;
     const mod = modulesStateRef.current[index];
+    const isWeapon = mod.type === 'hybrid_weapon' || mod.type === 'missile_weapon';
+    if (!mod.active && isWeapon && (!mod.ammoId || (ammoPoolRef.current[mod.ammoId] ?? 0) <= 0)) {
+      addLog(`Cannot activate ${mod.name}: no ammunition assigned or loaded!`);
+      return;
+    }
     if (!mod.active && capRef.current < (mod.cost.cap || 0)) {
       addLog(`Not enough capacitor to activate ${mod.name}!`);
       return;
@@ -182,6 +222,32 @@ export default function BattleScene({ encounter, nodeType = 'patrol', depth, ini
     mod.active = !mod.active;
     if (mod.active) mod.timer = 0; // Trigger immediately
     setForceRender(Date.now());
+  };
+
+  // In-battle reload (v0.11 FR-4): switching ammo costs 10s, not ammo — the
+  // weapon goes offline for RELOAD_TIME (ticked unconditionally at the top of
+  // the frame loop, even while toggled off, so re-toggling can't zero it).
+  const changeAmmo = (index, ammoId) => {
+    if (battleOverRef.current) return;
+    const mod = modulesStateRef.current[index];
+    if (!ammoId || !AMMO[ammoId] || ammoId === mod.ammoId) return;
+    mod.ammoId = ammoId;
+    mod.reload = RELOAD_TIME;
+    addLog(`[${mod.name}] Switching to ${AMMO[ammoId].name} — reloading...`);
+    setForceRender(Date.now());
+  };
+
+  // Weapon ammo assignments at battle-end, keyed by highIndex — written back
+  // to activeShip.ammo on victory/retreat so an in-battle reload carries into
+  // the next node/session (not on defeat: the hull and its fit are gone).
+  const buildAmmoAssignments = () => {
+    const assignments = {};
+    modulesStateRef.current.forEach((mod) => {
+      if ((mod.type === 'hybrid_weapon' || mod.type === 'missile_weapon') && mod.highIndex != null) {
+        assignments[mod.highIndex] = mod.ammoId;
+      }
+    });
+    return assignments;
   };
 
   // ALIGN & WARP (FR-4): an 8s align that ends the battle as a third outcome
@@ -212,6 +278,21 @@ export default function BattleScene({ encounter, nodeType = 'patrol', depth, ini
     setDistance(dist);
     setSpeed(playerVel.current.length() * 1000);
     setAlignHud(alignRef.current);
+
+    // Per-weapon ammo badge/select state (v0.11) — same throttle as the rest
+    // of the HUD, so the rack's remaining-count badge doesn't re-render every
+    // frame even though the underlying pool/reload refs mutate every frame.
+    const nextAmmoHud = {};
+    modulesStateRef.current.forEach((mod, idx) => {
+      if (mod.type === 'hybrid_weapon' || mod.type === 'missile_weapon') {
+        nextAmmoHud[idx] = {
+          ammoId: mod.ammoId,
+          qty: mod.ammoId ? (ammoPoolRef.current[mod.ammoId] ?? 0) : 0,
+          reload: mod.reload || 0
+        };
+      }
+    });
+    setAmmoHud(nextAmmoHud);
   };
 
   const endBattle = (result) => {
@@ -223,6 +304,7 @@ export default function BattleScene({ encounter, nodeType = 'patrol', depth, ini
     // Rolled here (battle-result time), not on the button click, so
     // dismissing/reopening the modal can't re-roll the wreck.
     if (result === 'victory') setLootIds(rollLoot(enemy, effDepth, nodeType));
+    setConsumedSnapshot({ ...ammoUsedRef.current });
     syncHud(playerPos.current.distanceTo(enemyPos.current));
     setOutcome(result);
   };
@@ -252,6 +334,11 @@ export default function BattleScene({ encounter, nodeType = 'patrol', depth, ini
     let enemyWebbed = false;
 
     modulesStateRef.current.forEach((mod) => {
+      // Reload ticks unconditionally, even while toggled off (v0.11 FR-4) —
+      // this is what stops the "reload, toggle off, toggle back on" exploit
+      // from zeroing the countdown, since it's independent of mod.timer.
+      if (mod.reload > 0) mod.reload = Math.max(0, mod.reload - dt);
+
       if (!mod.active) return;
 
       // Continuous effects of active modules
@@ -278,6 +365,23 @@ export default function BattleScene({ encounter, nodeType = 'patrol', depth, ini
         return;
       }
 
+      // Ammo gate (v0.11, weapons only): mirrors the capacitor auto-shutoff
+      // below. Mid-reload retries in 0.5s without touching capacitor; an
+      // empty or unassigned pool deactivates the weapon outright — FR-4's
+      // "打空自动停火并在 HUD 提示" (out of ammo auto-stops fire with a HUD cue).
+      if (mod.type === 'hybrid_weapon' || mod.type === 'missile_weapon') {
+        if (mod.reload > 0) {
+          mod.timer = 0.5;
+          return;
+        }
+        if (!mod.ammoId || (ammoPoolRef.current[mod.ammoId] ?? 0) <= 0) {
+          mod.active = false;
+          addLog(`[${mod.name}] Out of ammunition!`);
+          setForceRender(Date.now());
+          return;
+        }
+      }
+
       if (capRef.current < (mod.cost.cap || 0)) {
         mod.active = false;
         addLog(`[${mod.name}] Deactivated: Capacitor depleted!`);
@@ -288,9 +392,15 @@ export default function BattleScene({ encounter, nodeType = 'patrol', depth, ini
       mod.timer = mod.stats.rof || mod.stats.activation_time;
 
       if (mod.type === 'hybrid_weapon') {
-        const quality = rollTurretShot(distMeters, mod.stats, enemy.defense.sig_radius, angularVelocity.current);
+        // Ammo modifiers apply at fire time, downstream of getEffectiveStats
+        // (eff.damageMult) — see src/lib/ammo.js. One round per activation,
+        // misses included; the pool is shared across weapons on the same ammo id.
+        const fireStats = applyAmmoToWeapon(mod.stats, AMMO[mod.ammoId]);
+        ammoPoolRef.current[mod.ammoId] = (ammoPoolRef.current[mod.ammoId] ?? 0) - 1;
+        ammoUsedRef.current[mod.ammoId] = (ammoUsedRef.current[mod.ammoId] ?? 0) + 1;
+        const quality = rollTurretShot(distMeters, fireStats, enemy.defense.sig_radius, angularVelocity.current);
         if (quality !== null) {
-          const { dmg } = applyDamage(enemyHp.current, enemy.defense, mod.stats.damage, quality * eff.damageMult.hybrid_weapon);
+          const { dmg } = applyDamage(enemyHp.current, enemy.defense, fireStats.damage, quality * eff.damageMult.hybrid_weapon);
           addLog(`[${mod.name}] ${quality === 3.0 ? 'WRECKS' : 'hits'} for ${Math.floor(dmg)} dmg!`);
         } else {
           addLog(`[${mod.name}] Misses!`);
@@ -298,8 +408,13 @@ export default function BattleScene({ encounter, nodeType = 'patrol', depth, ini
       } else if (mod.type === 'missile_weapon') {
         // FR-1: enemy speed/signature (MWD has no analogue on NPCs) feed the
         // same missileDamageFactor the enemy's own missiles use against us.
-        const factor = missileDamageFactor(enemy.defense.sig_radius, enemyVel.current.length() * 1000, mod.stats.explosion_radius, mod.stats.explosion_velocity);
-        const { dmg } = applyDamage(enemyHp.current, enemy.defense, mod.stats.damage, factor * eff.damageMult.missile_weapon);
+        // The warhead (v0.11) supplies explosion_radius/velocity; range holds
+        // above still read the launcher's own mod.stats.range unchanged.
+        const fireStats = applyAmmoToWeapon(mod.stats, AMMO[mod.ammoId]);
+        ammoPoolRef.current[mod.ammoId] = (ammoPoolRef.current[mod.ammoId] ?? 0) - 1;
+        ammoUsedRef.current[mod.ammoId] = (ammoUsedRef.current[mod.ammoId] ?? 0) + 1;
+        const factor = missileDamageFactor(enemy.defense.sig_radius, enemyVel.current.length() * 1000, fireStats.explosion_radius, fireStats.explosion_velocity);
+        const { dmg } = applyDamage(enemyHp.current, enemy.defense, fireStats.damage, factor * eff.damageMult.missile_weapon);
         addLog(`[${mod.name}] Hits for ${Math.floor(dmg)} dmg!`);
       } else if (mod.type === 'shield_repair') {
         playerHp.current.shield = Math.min(eff.defense.shield.hp, playerHp.current.shield + mod.stats.shield_bonus);
@@ -487,22 +602,40 @@ export default function BattleScene({ encounter, nodeType = 'patrol', depth, ini
           <p style={{ color: 'var(--color-text-muted)', marginBottom: '1rem' }}>
             The {enemy.name} breaks apart. Bounty: {enemy.reward.toLocaleString()} ISK · <span style={{ color: '#e8a838' }}>+{enemy.spReward.toLocaleString()} SP</span>
           </p>
-          <div style={{ textAlign: 'left', minWidth: '260px', marginBottom: '2rem' }}>
+          <div style={{ textAlign: 'left', minWidth: '260px', marginBottom: '1rem' }}>
             {lootIds.length === 0 ? (
               <p style={{ color: 'var(--color-text-muted)', fontSize: '0.85rem', margin: 0 }}>No salvageable modules.</p>
             ) : (
-              lootIds.map((id, i) => (
-                <p key={i} style={{ color: TIER_COLORS[MODULES[id].tier] || '#fff', fontSize: '0.85rem', margin: '0.25rem 0' }}>
-                  + {MODULES[id].name} <span style={{ opacity: 0.7 }}>({MODULES[id].tier})</span>
-                </p>
-              ))
+              lootIds.map((drop, i) => {
+                if (typeof drop === 'string') {
+                  const m = MODULES[drop];
+                  return (
+                    <p key={i} style={{ color: TIER_COLORS[m.tier] || '#fff', fontSize: '0.85rem', margin: '0.25rem 0' }}>
+                      + {m.name} <span style={{ opacity: 0.7 }}>({m.tier})</span>
+                    </p>
+                  );
+                }
+                const a = AMMO[drop.ammoId];
+                return (
+                  <p key={i} style={{ color: TIER_COLORS[a?.tier] || '#fff', fontSize: '0.85rem', margin: '0.25rem 0' }}>
+                    + {a?.name ?? drop.ammoId} ×{drop.qty} <span style={{ opacity: 0.7 }}>({a?.tier})</span>
+                  </p>
+                );
+              })
             )}
           </div>
+          {Object.keys(consumedSnapshot).length > 0 && (
+            <p style={{ color: 'var(--color-text-muted)', fontSize: '0.7rem', marginBottom: '1rem' }}>
+              Expended: {Object.entries(consumedSnapshot).map(([id, qty]) => `${qty}× ${AMMO[id]?.name ?? id}`).join(' · ')}
+              {' '}(−{Object.entries(consumedSnapshot).reduce((sum, [id, qty]) => sum + qty * (AMMO[id]?.price ?? 0), 0).toLocaleString()} ISK)
+            </p>
+          )}
           <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center' }}>
             <button onClick={() => {
               addIsk(enemy.reward);
               addSp(enemy.spReward);
               addLoot(lootIds);
+              settleBattleAmmo({ consumed: ammoUsedRef.current, assignments: buildAmmoAssignments() });
               onVictory({ ...playerHp.current });
             }} style={{ background: '#2cd67c', color: '#000', border: 'none', padding: '1rem 2rem', fontWeight: 'bold' }}>
               {isFinalNode ? 'Loot Wreck & Dock' : 'Loot Wreck & Take Gate'}
@@ -521,6 +654,7 @@ export default function BattleScene({ encounter, nodeType = 'patrol', depth, ini
           </p>
           <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center' }}>
             <button onClick={() => {
+              settleBattleAmmo({ consumed: ammoUsedRef.current });
               shipDestroyed();
               onDefeat();
             }} style={{ background: '#ff4a4a', color: '#000', border: 'none', padding: '1rem 2rem', fontWeight: 'bold' }}>
@@ -534,11 +668,20 @@ export default function BattleScene({ encounter, nodeType = 'patrol', depth, ini
       {outcome === 'retreat' && (
         <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', background: 'rgba(20,16,5,0.95)', border: '1px solid #e8a838', padding: '3rem', borderRadius: '8px', zIndex: 100, textAlign: 'center', boxShadow: '0 0 50px rgba(232, 168, 56, 0.2)' }}>
           <h2 style={{ color: '#e8a838', fontSize: '2rem', marginBottom: '1rem', fontFamily: 'var(--font-display)' }}>WARP OUT</h2>
-          <p style={{ color: 'var(--color-text-muted)', marginBottom: '2rem', maxWidth: '380px' }}>
+          <p style={{ color: 'var(--color-text-muted)', marginBottom: '1rem', maxWidth: '380px' }}>
             Engagement abandoned. Bounty, SP and salvage forfeited; the site is lost for this dive.
           </p>
+          {Object.keys(consumedSnapshot).length > 0 && (
+            <p style={{ color: 'var(--color-text-muted)', fontSize: '0.7rem', marginBottom: '1rem' }}>
+              Expended: {Object.entries(consumedSnapshot).map(([id, qty]) => `${qty}× ${AMMO[id]?.name ?? id}`).join(' · ')}
+              {' '}(−{Object.entries(consumedSnapshot).reduce((sum, [id, qty]) => sum + qty * (AMMO[id]?.price ?? 0), 0).toLocaleString()} ISK)
+            </p>
+          )}
           <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center' }}>
-            <button onClick={() => onRetreat({ ...playerHp.current })} style={{ background: '#e8a838', color: '#000', border: 'none', padding: '1rem 2rem', fontWeight: 'bold' }}>
+            <button onClick={() => {
+              settleBattleAmmo({ consumed: ammoUsedRef.current, assignments: buildAmmoAssignments() });
+              onRetreat({ ...playerHp.current });
+            }} style={{ background: '#e8a838', color: '#000', border: 'none', padding: '1rem 2rem', fontWeight: 'bold' }}>
               Return to Map
             </button>
           </div>
@@ -572,18 +715,37 @@ export default function BattleScene({ encounter, nodeType = 'patrol', depth, ini
       </div>
 
       {/* MODULE RACK */}
-      <div style={{ position: 'absolute', bottom: '170px', left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: '0.5rem', zIndex: 20 }}>
-        {modulesStateRef.current.map((mod, idx) => (
-          <div key={idx} onClick={() => toggleModule(idx)} title={mod.name} style={{
-            width: '48px', height: '48px', borderRadius: '50%', background: mod.active ? 'rgba(44, 214, 124, 0.3)' : 'rgba(0,0,0,0.8)',
-            border: `2px solid ${mod.active ? '#2cd67c' : 'rgba(255,255,255,0.2)'}`,
-            display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
-            boxShadow: mod.active ? '0 0 15px rgba(44, 214, 124, 0.5)' : 'none',
-            color: '#fff', fontFamily: 'var(--font-display)'
-          }}>
-            {mod.name.charAt(0)}
-          </div>
-        ))}
+      <div style={{ position: 'absolute', bottom: '170px', left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: '0.5rem', zIndex: 20, alignItems: 'flex-end' }}>
+        {modulesStateRef.current.map((mod, idx) => {
+          const ammoInfo = ammoHud[idx];
+          return (
+            <div key={idx} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '2px', width: '90px' }}>
+              <div onClick={() => toggleModule(idx)} title={mod.name} style={{
+                width: '48px', height: '48px', borderRadius: '50%', background: mod.active ? 'rgba(44, 214, 124, 0.3)' : 'rgba(0,0,0,0.8)',
+                border: `2px solid ${mod.active ? '#2cd67c' : 'rgba(255,255,255,0.2)'}`,
+                display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer',
+                boxShadow: mod.active ? '0 0 15px rgba(44, 214, 124, 0.5)' : 'none',
+                color: '#fff', fontFamily: 'var(--font-display)', fontSize: ammoInfo?.reload > 0 ? '0.75rem' : '1rem'
+              }}>
+                {ammoInfo?.reload > 0 ? `${Math.ceil(ammoInfo.reload)}s` : mod.name.charAt(0)}
+              </div>
+              {ammoInfo && (
+                <>
+                  <span style={{ fontSize: '0.65rem', color: ammoInfo.qty > 0 ? '#fff' : '#ff4a4a' }}>×{ammoInfo.qty}</span>
+                  <select
+                    value={ammoInfo.ammoId || ''}
+                    onChange={(e) => changeAmmo(idx, e.target.value)}
+                    style={{ fontSize: '0.6rem', width: '90px', maxWidth: '90px' }}>
+                    {!ammoInfo.ammoId && <option value="">— none —</option>}
+                    {compatibleAmmo(mod).map((a) => (
+                      <option key={a.id} value={a.id}>{a.name} ({ammoPoolRef.current[a.id] ?? 0})</option>
+                    ))}
+                  </select>
+                </>
+              )}
+            </div>
+          );
+        })}
       </div>
 
       {/* HUD BARS */}

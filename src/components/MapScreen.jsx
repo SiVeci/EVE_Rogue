@@ -1,6 +1,7 @@
 import React from 'react';
 import { SEGMENT_LAYERS, reachableNodeIds } from '../lib/runmap';
 import { MODULES } from '../data/modules';
+import { AMMO } from '../data/ammo';
 import { TIER_COLORS } from '../lib/tiers';
 
 // Weapon intel line shown on each node so the player can refit before diving
@@ -210,11 +211,24 @@ function NoticeOverlay({ notice, onDismissNotice }) {
         {notice.lootIds.length === 0 ? (
           <p style={{ color: 'var(--color-text-muted)', fontSize: '0.85rem', margin: 0 }}>Nothing of value.</p>
         ) : (
-          notice.lootIds.map((id, i) => (
-            <p key={i} style={{ color: TIER_COLORS[MODULES[id]?.tier] || '#fff', fontSize: '0.85rem', margin: '0.25rem 0' }}>
-              + {MODULES[id]?.name || id} <span style={{ opacity: 0.7 }}>({MODULES[id]?.tier})</span>
-            </p>
-          ))
+          notice.lootIds.map((drop, i) => {
+            // v0.11: lootIds is a mixed array — string module ids (existing)
+            // alongside { ammoId, qty } ammo bundles, which would otherwise
+            // render as a bare object and crash here.
+            if (typeof drop === 'string') {
+              return (
+                <p key={i} style={{ color: TIER_COLORS[MODULES[drop]?.tier] || '#fff', fontSize: '0.85rem', margin: '0.25rem 0' }}>
+                  + {MODULES[drop]?.name || drop} <span style={{ opacity: 0.7 }}>({MODULES[drop]?.tier})</span>
+                </p>
+              );
+            }
+            const a = AMMO[drop.ammoId];
+            return (
+              <p key={i} style={{ color: TIER_COLORS[a?.tier] || '#fff', fontSize: '0.85rem', margin: '0.25rem 0' }}>
+                + {a?.name ?? drop.ammoId} ×{drop.qty} <span style={{ opacity: 0.7 }}>({a?.tier})</span>
+              </p>
+            );
+          })
         )}
       </div>
       <button onClick={onDismissNotice} style={{ padding: '0.6rem 1.5rem' }}>Continue</button>

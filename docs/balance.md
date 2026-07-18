@@ -110,7 +110,8 @@ retroactively changed" rule below — everything else still holds.
   ≤2 per segment. Elites are uncapped — they are the risk dial.
 - Repair anchor: free full restore (all three layers). Its cost is the node slot
   itself — a repair taken is a fight's rewards skipped. ISK-priced repair is
-  deliberately deferred to the v0.11 ammo-economy pass.
+  deliberately deferred; revisit after the ammo economy (v0.11) has been
+  observed in play.
 - Wreck field: one pre-rolled rollLoot pass against a depth-weighted NPC's
   lootTable at the node's own depth (patrol single pass, tier gates apply).
   Ambush chance 25%, pre-rolled at generation: an ambush replaces the salvage
@@ -176,6 +177,58 @@ retroactively changed" rule below — everything else still holds.
   57.1% / 28.3% / 10.6%. Exempt: skill multipliers, all `add` modifiers.
   2× MFS I = ×1.1956 (was 1.21), 3× = ×1.2638 (was 1.331) — the second copy
   still pays, the third is the real diminishing step.
+
+## Ammunition (new in v0.11)
+
+- Hybrid charges (family hybrid_s, all 6 hybrid turrets): Antimatter ×1.2 dmg /
+  ×0.6 optimal · Lead ×1.0/×1.0 (the standard — loading it reproduces the
+  weapon's printed panel exactly) · Iridium ×0.85/×1.6. Falloff, tracking, rof
+  and cap use are never modified by ammo.
+- Missile warheads (4 per family, damage type only): Mjolnir EM / Inferno TH /
+  Scourge KIN / Nova EXP. A warhead replaces the launcher's damage object with
+  its single type at the SAME total (conservation invariant: the four warheads
+  of a family are equal-power against a resistless target). Warheads carry the
+  family's explosion_radius/velocity (rockets 20/150, light missiles 40/170 —
+  identical to the launcher fields, so Scourge is byte-identical to v0.10
+  behavior and no warhead ever hits missileDamageFactor's missing-field
+  full-damage fallback).
+- Ammo modifiers apply at fire time via applyAmmoToWeapon (src/lib/ammo.js),
+  downstream of getEffectiveStats — they never enter the module-mult stacking
+  penalty and never touch damageMult. One round per weapon per activation,
+  misses included; range holds and non-weapon cycles consume nothing.
+- In-battle reload: 10 s (RELOAD_TIME, BattleScene), weapon offline, ticks
+  even while toggled off. Station-side ammo switching is instant. There is no
+  magazine: rounds leave cargo only when fired, switching costs time, not ammo.
+- Prices (ISK/round · market lot 100): Lead 35 · Iridium 45 · Antimatter 60 ·
+  all warheads 35. Blueprint batches: 200 rounds at exactly 75% of market
+  per-round price (Lead 5,250 · Iridium 6,750 · Antimatter 9,000 · warheads
+  5,250). Ammo sells back at 50% per round, whole stacks only.
+- Consumption anchor: a depth-3 patrol (expected bounty 21,060) costs 5–15%
+  of its bounty in ammo — 3× blaster: Lead 6.5% / Iridium 8.3% / Antimatter
+  11.1%; 3× rail Lead 5.0%; 4× rocket 6.6%; 3× LML 5.5% (55 s kite model).
+  The ratio shrinks with depth and on elites (bounty scales, rounds don't).
+  Tuning lever: per-round price only.
+- Loot bundles: one { ammoId, qty, chance } entry per NPC table, 50–80 rounds
+  at 15–20% — the faction drops the ammo that counters it (Sansha → Mjolnir,
+  Angel → Nova, Sniper → Iridium). EV 263–560 ISK/kill ≈ 1.4–2.8% of bounty:
+  a supplement, not an offset (worst same-family case ~40% of a rocket
+  user's spend vs the depth-1 Guristas). Module entries are untouched — the
+  0.35–0.45 module-EV band re-ran unchanged.
+- Starter cargo (new saves AND the v2→v3 migration gift): 300 Lead + 150
+  Scourge Rocket + 150 Scourge Light Missile (21,000 ISK; ~7–8 fights for a
+  3-turret fit). Fitting a weapon auto-assigns its family default (Lead /
+  Scourge) — the "must load ammo to fire" rule stays, forgetting is made hard.
+- Soft-lock clause extension: whenever the free-Incursus grant fires (load or
+  death), cargo is topped up to ≥100 of each family default (AMMO_SAFETY_QTY) —
+  the freebie hull must be able to actually shoot with any surviving weapon.
+  Cargo itself survives death like the hangar; only rounds already fired in
+  the losing fight are deducted (all three outcomes settle consumption).
+- Fallback valve (recorded, not enabled): if "must load ammo" proves a
+  frequent, low-agency death cause in play, the documented rollback is
+  firing at ×0.5 panel effectiveness with no ammo assigned instead of not
+  firing at all. Not implemented in v0.11 — the four mitigations (starter
+  cargo, fit-time auto-assign, soft-lock top-up, UNDOCK warning) are the
+  first line of defense.
 
 ## Skill defaults
 

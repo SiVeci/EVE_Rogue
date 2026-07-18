@@ -44,7 +44,8 @@ export const NPCS = {
       { moduleId: 'light_missile_launcher_i', chance: 0.10 },
       { moduleId: 'ballistic_control_system_i', chance: 0.12 },
       { moduleId: 'ballistic_control_system_ii', chance: 0.06 },
-      { moduleId: 'rocket_launcher_ii', chance: 0.06 }
+      { moduleId: 'rocket_launcher_ii', chance: 0.06 },
+      { ammoId: 'scourge_rocket', qty: 60, chance: 0.20 }
     ],
     baseReward: 15000 // ISK
   },
@@ -88,7 +89,8 @@ export const NPCS = {
       { moduleId: 'fleeting_compact_stasis_webifier', chance: 0.10 },
       { moduleId: 'magnetic_field_stabilizer_i', chance: 0.10 },
       { moduleId: 'light_neutron_blaster_ii', chance: 0.08 },
-      { moduleId: 'small_armor_repairer_ii', chance: 0.06 }
+      { moduleId: 'small_armor_repairer_ii', chance: 0.06 },
+      { ammoId: 'antimatter_charge_s', qty: 50, chance: 0.15 }
     ],
     baseReward: 18000
   },
@@ -132,7 +134,8 @@ export const NPCS = {
       { moduleId: 'railgun_125mm_i', chance: 0.17 },
       { moduleId: 'co_processor_i', chance: 0.12 },
       { moduleId: 'light_neutron_blaster_ii', chance: 0.08 },
-      { moduleId: 'railgun_125mm_ii', chance: 0.06 }
+      { moduleId: 'railgun_125mm_ii', chance: 0.06 },
+      { ammoId: 'iridium_charge_s', qty: 60, chance: 0.18 }
     ],
     baseReward: 20000
   },
@@ -182,7 +185,8 @@ export const NPCS = {
       { moduleId: 'fleeting_compact_stasis_webifier', chance: 0.17 },
       { moduleId: 'mn1_monopropellant_afterburner', chance: 0.10 },
       { moduleId: 'overdrive_injector_system_i', chance: 0.10 },
-      { moduleId: 'light_missile_launcher_ii', chance: 0.06 }
+      { moduleId: 'light_missile_launcher_ii', chance: 0.06 },
+      { ammoId: 'nova_rocket', qty: 60, chance: 0.15 }
     ],
     baseReward: 22000
   },
@@ -226,7 +230,8 @@ export const NPCS = {
       { moduleId: 'energized_adaptive_nano_membrane_i', chance: 0.10 },
       { moduleId: 'stasis_webifier_i', chance: 0.08 },
       { moduleId: 'magnetic_field_stabilizer_ii', chance: 0.06 },
-      { moduleId: 'small_infectious_scoped_energy_neutralizer', chance: 0.07 }
+      { moduleId: 'small_infectious_scoped_energy_neutralizer', chance: 0.07 },
+      { ammoId: 'mjolnir_light_missile', qty: 50, chance: 0.15 }
     ],
     baseReward: 19000
   },
@@ -270,7 +275,8 @@ export const NPCS = {
       { moduleId: 'small_acm_compact_armor_repairer', chance: 0.10 },
       { moduleId: 'energized_adaptive_nano_membrane_i', chance: 0.09 },
       { moduleId: 'mn1_afterburner_ii', chance: 0.06 },
-      { moduleId: 'small_infectious_scoped_energy_neutralizer', chance: 0.06 }
+      { moduleId: 'small_infectious_scoped_energy_neutralizer', chance: 0.06 },
+      { ammoId: 'mjolnir_rocket', qty: 60, chance: 0.15 }
     ],
     baseReward: 21000
   },
@@ -318,7 +324,8 @@ export const NPCS = {
       { moduleId: 'fleeting_compact_stasis_webifier', chance: 0.12 },
       { moduleId: 'light_ion_blaster_i', chance: 0.10 },
       { moduleId: 'magnetic_field_stabilizer_i', chance: 0.08 },
-      { moduleId: 'stasis_webifier_ii', chance: 0.06 }
+      { moduleId: 'stasis_webifier_ii', chance: 0.06 },
+      { ammoId: 'lead_charge_s', qty: 80, chance: 0.20 }
     ],
     baseReward: 19500
   },
@@ -361,7 +368,8 @@ export const NPCS = {
       { moduleId: 'mn1_monopropellant_afterburner', chance: 0.14 },
       { moduleId: 'overdrive_injector_system_i', chance: 0.10 },
       { moduleId: 'fleeting_compact_stasis_webifier', chance: 0.08 },
-      { moduleId: 'small_shield_booster_ii', chance: 0.06 }
+      { moduleId: 'small_shield_booster_ii', chance: 0.06 },
+      { ammoId: 'nova_light_missile', qty: 50, chance: 0.15 }
     ],
     baseReward: 24000
   }

@@ -5,6 +5,7 @@ import MapScreen from './components/MapScreen'
 import BattleScene from './components/BattleScene'
 import { useGameStore } from './store/gameStore'
 import { getEffectiveStats } from './lib/shipStats'
+import { ammoReadiness } from './lib/ammo'
 import { generateRunMap, reachableNodeIds, isFinalLayer } from './lib/runmap'
 
 function findNode(map, nodeId) {
@@ -17,7 +18,12 @@ function findNode(map, nodeId) {
 
 function App() {
   const [view, setView] = useState('station'); // 'station' | 'map' | 'space'
-  const { isk, activeShip, skills } = useGameStore();
+  const { isk, activeShip, skills, cargo } = useGameStore();
+
+  // UNDOCK ammo-readiness warning (v0.11 FR-6): informational only, never
+  // blocks undocking — the "must load ammo to fire" rule is enforced at the
+  // in-battle fire gate (BattleScene), not at this gate.
+  const readiness = activeShip ? ammoReadiness(activeShip, cargo) : null;
 
   // Segment map/position/HP is local, deliberately not persisted (v0.9 FR-3):
   // a refresh is a voluntary dock-out. null = not currently in a dive.
@@ -113,13 +119,24 @@ function App() {
           <span>ISK: {isk.toLocaleString()}</span>
           <span>Location: {view === 'station' ? 'Station (High Sec)' : 'Abyssal Deadspace'}</span>
           {view === 'station' && (
-            <button
-              onClick={startRun}
-              disabled={!activeShip}
-              title={activeShip ? undefined : 'No active ship — buy or board one first'}
-              style={{ borderColor: '#ff4a4a', color: '#ff4a4a', opacity: activeShip ? 1 : 0.4, cursor: activeShip ? 'pointer' : 'not-allowed' }}>
-              UNDOCK
-            </button>
+            <>
+              {readiness && (readiness.unassigned > 0 || readiness.dry > 0) && (
+                <span
+                  style={{ color: '#e8a838', fontSize: '0.8rem' }}
+                  title="Check the FITTING tab's Ammunition panel before undocking">
+                  {readiness.unassigned > 0
+                    ? `⚠ ammo not assigned (${readiness.unassigned})`
+                    : `⚠ ${readiness.dry} weapon${readiness.dry > 1 ? 's' : ''} dry`}
+                </span>
+              )}
+              <button
+                onClick={startRun}
+                disabled={!activeShip}
+                title={activeShip ? undefined : 'No active ship — buy or board one first'}
+                style={{ borderColor: '#ff4a4a', color: '#ff4a4a', opacity: activeShip ? 1 : 0.4, cursor: activeShip ? 'pointer' : 'not-allowed' }}>
+                UNDOCK
+              </button>
+            </>
           )}
           {view === 'map' && (
             <button onClick={handleDockFromMap}>ABORT & DOCK</button>

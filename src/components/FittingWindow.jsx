@@ -1,12 +1,14 @@
 import React, { useMemo } from 'react';
 import { useGameStore } from '../store/gameStore';
 import { getEffectiveStats } from '../lib/shipStats';
+import { compatibleAmmo } from '../lib/ammo';
+import { AMMO } from '../data/ammo';
 import { meetsRequiredSkills, describeRequiredSkills } from '../data/skills';
 import { SHIPS } from '../data/ships';
 import './FittingWindow.css';
 
 export default function FittingWindow() {
-  const { isk, activeShip, inventory, skills, ownedShips, insurance, fitModule, unfitModule, switchShip, buyInsurance } = useGameStore();
+  const { isk, activeShip, inventory, cargo, skills, ownedShips, insurance, fitModule, unfitModule, switchShip, buyInsurance, setWeaponAmmo } = useGameStore();
 
   // Single source of truth for stats: this is the same function fitModule's
   // validation and BattleScene's combat init use, so what's shown here is
@@ -48,6 +50,16 @@ export default function FittingWindow() {
   const pgPercent = Math.min(100, (eff.used.pg / effectivePG) * 100);
   const cpuPercent = Math.min(100, (eff.used.cpu / effectiveCPU) * 100);
   const fmtResist = (layer) => `${Math.round(layer.em)}/${Math.round(layer.th)}/${Math.round(layer.kin)}/${Math.round(layer.exp)}`;
+
+  // AMMUNITION (v0.11): one selector row per fitted weapon, index-aligned
+  // with activeShip.ammo (see gameStore's fitModule/unfitModule/merge for the
+  // invariant this depends on). No weapons-row space in the circular fit
+  // view itself (v0.7's slot dots have no room for a selector), so this
+  // lives in the right stat panel instead.
+  const weaponRows = activeShip.fittedModules.high
+    .map((m, i) => ({ m, i }))
+    .filter(({ m }) => m.ammoFamily);
+  const cargoEntries = Object.entries(cargo).filter(([, qty]) => qty > 0);
 
   // Helper to generate positions for slots around a circle
   // EVE style: High slots top-right (270 to 360/0 deg), Mid slots right (0 to 90 deg), Low slots bottom (90 to 180 deg)
@@ -189,7 +201,41 @@ export default function FittingWindow() {
 
       {/* RIGHT: STATS */}
       <div className="fw-stats panel">
-        
+
+        <div className="stat-group">
+          <h3>Ammunition</h3>
+          {weaponRows.length === 0 && (
+            <p style={{ color: 'var(--color-text-muted)', fontSize: '0.75rem', margin: 0 }}>No weapons fitted.</p>
+          )}
+          {weaponRows.map(({ m, i }) => {
+            const ammoId = activeShip.ammo?.[i] ?? null;
+            const qty = ammoId ? (cargo[ammoId] ?? 0) : 0;
+            return (
+              <div key={i} className="stat-row" style={{ gap: '0.4rem' }}>
+                <span style={{ fontSize: '0.72rem' }}>H{i + 1} · {m.name}</span>
+                <select
+                  value={ammoId || ''}
+                  onChange={(e) => setWeaponAmmo(i, e.target.value)}
+                  style={{ fontSize: '0.68rem', maxWidth: '130px' }}>
+                  {!ammoId && <option value="">— none —</option>}
+                  {compatibleAmmo(m).map((a) => (
+                    <option key={a.id} value={a.id}>{a.name}</option>
+                  ))}
+                </select>
+                <span className="stat-val" style={{ fontSize: '0.7rem', color: qty > 0 ? '#fff' : '#ff4a4a' }}>{qty.toLocaleString()}</span>
+              </div>
+            );
+          })}
+          <div className="stat-row" style={{ marginTop: '0.5rem', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '0.5rem' }}>
+            <span>Cargo Hold</span>
+            <span className="stat-val" style={{ fontSize: '0.68rem', textAlign: 'right' }}>
+              {cargoEntries.length === 0
+                ? 'Empty'
+                : cargoEntries.map(([id, qty]) => `${AMMO[id]?.name ?? id} ×${qty.toLocaleString()}`).join(' · ')}
+            </span>
+          </div>
+        </div>
+
         <div className="stat-group">
           <h3>Fitting <span>PG / CPU</span></h3>
           <div className="stat-row">

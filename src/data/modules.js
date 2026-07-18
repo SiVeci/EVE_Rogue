@@ -9,6 +9,7 @@ export const MODULES = {
     slot: 'high',
     tier: 'T1',
     price: 5000,
+    ammoFamily: 'hybrid_s',
     description: 'Short range, high damage hybrid weapon.',
     cost: { pg: 3, cpu: 11, cap: 2 },
     stats: {
@@ -26,6 +27,7 @@ export const MODULES = {
     slot: 'high',
     tier: 'T1',
     price: 7500,
+    ammoFamily: 'hybrid_s',
     description: 'The heaviest of the light blasters. More damage, more fitting.',
     cost: { pg: 5, cpu: 15, cap: 2.5 },
     stats: {
@@ -43,6 +45,7 @@ export const MODULES = {
     slot: 'high',
     tier: 'T1',
     price: 7000,
+    ammoFamily: 'hybrid_s',
     description: 'Long range hybrid weapon. Poor tracking against close, fast targets.',
     cost: { pg: 6, cpu: 18, cap: 3 },
     stats: {
@@ -60,6 +63,7 @@ export const MODULES = {
     slot: 'high',
     tier: 'T1',
     price: 9000,
+    ammoFamily: 'hybrid_s',
     description: 'The heaviest small railgun. Reaches well past rocket range — poor tracking makes it nearly blind up close.',
     cost: { pg: 8, cpu: 22, cap: 3.5 },
     stats: {
@@ -78,6 +82,7 @@ export const MODULES = {
     tier: 'T2',
     price: 30000,
     requiredSkills: { small_hybrid_turret: 5 },
+    ammoFamily: 'hybrid_s',
     description: 'The largest light hybrid turret. Tech II fitting requirements, meaningfully more damage than the Ion. Loot-only.',
     cost: { pg: 7, cpu: 18, cap: 3 },
     stats: {
@@ -96,6 +101,7 @@ export const MODULES = {
     tier: 'T2',
     price: 25000,
     requiredSkills: { small_hybrid_turret: 5 },
+    ammoFamily: 'hybrid_s',
     description: 'Tech II railgun. Sharper tracking and more damage than the T1 variant. Loot-only.',
     cost: { pg: 7, cpu: 21, cap: 3.5 },
     stats: {
@@ -113,6 +119,7 @@ export const MODULES = {
     slot: 'high',
     tier: 'T1',
     price: 6000,
+    ammoFamily: 'rocket_s',
     description: 'Fires unguided rockets. Always hits if within range.',
     cost: { pg: 4, cpu: 20, cap: 0 },
     stats: {
@@ -130,6 +137,7 @@ export const MODULES = {
     slot: 'high',
     tier: 'T1',
     price: 7000,
+    ammoFamily: 'light_missile',
     description: 'Long range guided missiles. Lower damage than rockets, far greater reach.',
     cost: { pg: 4, cpu: 22, cap: 0 },
     stats: {
@@ -149,6 +157,7 @@ export const MODULES = {
     tier: 'T2',
     price: 21000,
     requiredSkills: { missiles: 5 },
+    ammoFamily: 'rocket_s',
     description: 'Tech II rocket launcher. Heavier warheads than the T1 variant. Loot-only.',
     cost: { pg: 5, cpu: 24, cap: 0 },
     stats: {
@@ -167,6 +176,7 @@ export const MODULES = {
     tier: 'T2',
     price: 25000,
     requiredSkills: { missiles: 5 },
+    ammoFamily: 'light_missile',
     description: 'Tech II guided missile launcher. Heavier warheads than the T1 variant. Loot-only.',
     cost: { pg: 5, cpu: 26, cap: 0 },
     stats: {

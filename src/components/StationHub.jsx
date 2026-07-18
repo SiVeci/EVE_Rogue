@@ -3,6 +3,8 @@ import FittingWindow from './FittingWindow';
 import MarketWindow from './MarketWindow';
 import { useGameStore } from '../store/gameStore';
 import { SKILLS, skillUnlocks } from '../data/skills';
+import { BLUEPRINTS } from '../data/blueprints';
+import { AMMO } from '../data/ammo';
 
 // Cost to train the *next* level. A gate skill's first level (0->1) costs
 // 1,000 SP, not free; stat skills' first upgrade (1->2) costs 2,000.
@@ -46,9 +48,43 @@ export function SkillsPanel({ sp, skills, trainSkill }) {
   );
 }
 
+// Extracted (v0.11) so it can be rendered (and SSR-tested) without going
+// through StationHub's tab state, same precedent as SkillsPanel above.
+// Blueprints are static content (src/data/blueprints.js), not store state.
+export function IndustryPanel({ isk, manufacture }) {
+  return (
+    <div className="panel" style={{ padding: '2rem', height: '100%', overflowY: 'auto' }}>
+      <h2 style={{ color: '#fff', marginBottom: '1rem' }}>Manufacturing Facility</h2>
+      <p style={{ color: 'var(--color-text-muted)', marginBottom: '2rem' }}>Construct new modules and ammunition using acquired Blueprints and ISK.</p>
+      <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
+        {BLUEPRINTS.map(bp => {
+          const ammo = AMMO[bp.produces];
+          return (
+            <div key={bp.id} style={{ background: 'rgba(0,0,0,0.5)', border: '1px solid rgba(90,150,255,0.3)', padding: '1rem', width: '300px' }}>
+              <h3 style={{ color: '#fff', fontSize: '1rem' }}>{bp.name}</h3>
+              {ammo && (
+                <p style={{ color: 'var(--color-text-muted)', fontSize: '0.75rem', marginTop: '0.25rem' }}>
+                  {bp.qty} rounds · {(bp.cost / bp.qty).toFixed(2)} ISK/round (market {ammo.price})
+                </p>
+              )}
+              <p style={{ color: 'var(--color-gallente)', marginTop: '0.5rem' }}>Cost: {bp.cost.toLocaleString()} ISK</p>
+              <button
+                onClick={() => manufacture(bp)}
+                disabled={isk < bp.cost}
+                style={{ marginTop: '1rem', width: '100%', opacity: isk < bp.cost ? 0.4 : 1, cursor: isk < bp.cost ? 'not-allowed' : 'pointer' }}>
+                Manufacture
+              </button>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 export default function StationHub({ onUndock }) {
   const [activeTab, setActiveTab] = useState('fitting');
-  const { isk, sp, skills, blueprints, trainSkill, manufacture, resetProgress } = useGameStore();
+  const { isk, sp, skills, trainSkill, manufacture, resetProgress } = useGameStore();
 
   const handleReset = () => {
     if (window.confirm('Reset all progress? ISK, skills, hangar and fitting will be wiped.')) {
@@ -83,26 +119,7 @@ export default function StationHub({ onUndock }) {
 
         {activeTab === 'market' && <MarketWindow />}
 
-        {activeTab === 'industry' && (
-          <div className="panel" style={{ padding: '2rem', height: '100%' }}>
-            <h2 style={{ color: '#fff', marginBottom: '1rem' }}>Manufacturing Facility</h2>
-            <p style={{ color: 'var(--color-text-muted)', marginBottom: '2rem' }}>Construct new modules using acquired Blueprints and ISK.</p>
-            <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap' }}>
-              {blueprints.map(bp => (
-                <div key={bp.id} style={{ background: 'rgba(0,0,0,0.5)', border: '1px solid rgba(90,150,255,0.3)', padding: '1rem', width: '300px' }}>
-                  <h3 style={{ color: '#fff', fontSize: '1rem' }}>{bp.name}</h3>
-                  <p style={{ color: 'var(--color-gallente)', marginTop: '0.5rem' }}>Cost: {bp.cost.toLocaleString()} ISK</p>
-                  <button
-                    onClick={() => manufacture(bp)}
-                    disabled={isk < bp.cost}
-                    style={{ marginTop: '1rem', width: '100%', opacity: isk < bp.cost ? 0.4 : 1, cursor: isk < bp.cost ? 'not-allowed' : 'pointer' }}>
-                    Manufacture
-                  </button>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
+        {activeTab === 'industry' && <IndustryPanel isk={isk} manufacture={manufacture} />}
 
         {activeTab === 'skills' && <SkillsPanel sp={sp} skills={skills} trainSkill={trainSkill} />}
       </div>

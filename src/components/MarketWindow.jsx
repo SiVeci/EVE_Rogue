@@ -1,6 +1,7 @@
 import React from 'react';
 import { useGameStore } from '../store/gameStore';
 import { MODULES } from '../data/modules';
+import { AMMO, AMMO_LOT } from '../data/ammo';
 import { SHIPS } from '../data/ships';
 import { TIER_COLORS } from '../lib/tiers';
 
@@ -61,8 +62,15 @@ const rowStyle = {
   padding: '0.6rem 0.8rem', marginBottom: '0.5rem'
 };
 
+// One-line effect summary per ammo shape (v0.11) — mirrors keyStats above.
+const ammoSummary = (a) => {
+  if (a.charge) return `dmg ×${a.charge.damage_mult} · optimal ×${a.charge.optimal_mult}`;
+  if (a.warhead) return `${a.warhead.damage_type.toUpperCase()} warhead · ${a.warhead.explosion_radius}m blast`;
+  return '';
+};
+
 export default function MarketWindow() {
-  const { isk, inventory, ownedShips, activeShip, buyModule, sellModule, buyShip } = useGameStore();
+  const { isk, inventory, cargo, ownedShips, activeShip, buyModule, sellModule, buyShip, buyAmmo, sellAmmo } = useGameStore();
 
   // Meta/T2 are loot-only (see src/lib/loot.js) — the market only stocks T1.
   const modulesBySlot = (slot) => Object.values(MODULES).filter((m) => m.slot === slot && m.tier === 'T1');
@@ -127,6 +135,30 @@ export default function MarketWindow() {
             ))}
           </React.Fragment>
         ))}
+
+        {/* AMMUNITION (v0.11) — traded in lots of AMMO_LOT rounds, not per-unit */}
+        <h3 style={{ color: 'var(--color-text-muted)', fontSize: '0.8rem', letterSpacing: '1px', margin: '1rem 0 0.5rem' }}>AMMUNITION</h3>
+        {Object.values(AMMO).map((a) => {
+          const lotCost = a.price * AMMO_LOT;
+          return (
+            <div key={a.id} style={rowStyle}>
+              <span style={{ color: TIER_COLORS[a.tier] || 'var(--color-text-muted)', fontSize: '0.7rem', width: '2.5rem' }}>{a.tier}</span>
+              <div style={{ flex: 1 }}>
+                <span style={{ color: '#fff', fontSize: '0.9rem' }}>{a.name}</span>
+                <span style={{ color: 'var(--color-text-muted)', fontSize: '0.75rem', display: 'block' }}>
+                  {ammoSummary(a)} · own {(cargo[a.id] ?? 0).toLocaleString()}
+                </span>
+              </div>
+              <span style={{ color: 'var(--color-gallente)', fontSize: '0.85rem' }}>{lotCost.toLocaleString()} ISK / {AMMO_LOT}</span>
+              <button
+                onClick={() => buyAmmo(a.id)}
+                disabled={isk < lotCost}
+                style={{ opacity: isk < lotCost ? 0.4 : 1, cursor: isk < lotCost ? 'not-allowed' : 'pointer' }}>
+                Buy
+              </button>
+            </div>
+          );
+        })}
       </div>
 
       {/* RIGHT: SELL FROM HANGAR */}
@@ -145,6 +177,27 @@ export default function MarketWindow() {
             </button>
           </div>
         ))}
+
+        <h3 style={{ color: '#fff', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '0.5rem', margin: '1.5rem 0 1rem' }}>SELL AMMO (CARGO)</h3>
+        <p style={{ color: 'var(--color-text-muted)', fontSize: '0.75rem', marginBottom: '1rem' }}>Whole stacks only, 50% of market price/round.</p>
+        {Object.entries(cargo).filter(([, qty]) => qty > 0).length === 0 && (
+          <p style={{ color: 'var(--color-text-muted)', fontSize: '0.8rem' }}>Cargo hold is empty.</p>
+        )}
+        {Object.entries(cargo).filter(([, qty]) => qty > 0).map(([id, qty]) => {
+          const a = AMMO[id];
+          if (!a) return null;
+          return (
+            <div key={id} style={rowStyle}>
+              <span style={{ color: TIER_COLORS[a.tier] || 'var(--color-text-muted)', fontSize: '0.7rem', width: '2.5rem' }}>{a.tier}</span>
+              <div style={{ flex: 1 }}>
+                <span style={{ color: '#fff', fontSize: '0.85rem' }}>{a.name} ×{qty.toLocaleString()}</span>
+              </div>
+              <button onClick={() => sellAmmo(id)}>
+                Sell all ({Math.round(qty * a.price * 0.5).toLocaleString()})
+              </button>
+            </div>
+          );
+        })}
       </div>
 
     </div>
