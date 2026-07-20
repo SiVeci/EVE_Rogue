@@ -15,7 +15,8 @@ export const SKILLS = {
   shield_operation: { name: 'Shield Operation', desc: 'Level 4 unlocks Tech II shield modules' },
   repair_systems: { name: 'Repair Systems', desc: 'Level 4 unlocks Tech II armor repairers' },
   high_speed_maneuvering: { name: 'High Speed Maneuvering', desc: 'Level 4 unlocks Tech II propulsion modules' },
-  electronic_warfare: { name: 'Electronic Warfare', desc: 'Level 4 unlocks Tech II stasis webifiers' }
+  electronic_warfare: { name: 'Electronic Warfare', desc: 'Level 4 unlocks Tech II stasis webifiers' },
+  drones: { name: 'Drones', desc: 'Each level allows one more drone in space (bandwidth permitting)' }
 };
 
 // A ship or module's `requiredSkills` is a { skillKey: minLevel } map. Both

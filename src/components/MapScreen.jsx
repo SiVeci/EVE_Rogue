@@ -2,6 +2,7 @@ import React from 'react';
 import { SEGMENT_LAYERS, reachableNodeIds } from '../lib/runmap';
 import { MODULES } from '../data/modules';
 import { AMMO } from '../data/ammo';
+import { DRONES } from '../data/drones';
 import { TIER_COLORS } from '../lib/tiers';
 
 // Weapon intel line shown on each node so the player can refit before diving
@@ -213,12 +214,21 @@ function NoticeOverlay({ notice, onDismissNotice }) {
         ) : (
           notice.lootIds.map((drop, i) => {
             // v0.11: lootIds is a mixed array — string module ids (existing)
-            // alongside { ammoId, qty } ammo bundles, which would otherwise
-            // render as a bare object and crash here.
+            // alongside { ammoId, qty } ammo bundles, and (v0.12) { droneId,
+            // qty } bundles, either of which would otherwise render as a
+            // bare object and crash here.
             if (typeof drop === 'string') {
               return (
                 <p key={i} style={{ color: TIER_COLORS[MODULES[drop]?.tier] || '#fff', fontSize: '0.85rem', margin: '0.25rem 0' }}>
                   + {MODULES[drop]?.name || drop} <span style={{ opacity: 0.7 }}>({MODULES[drop]?.tier})</span>
+                </p>
+              );
+            }
+            if (drop.droneId) {
+              const d = DRONES[drop.droneId];
+              return (
+                <p key={i} style={{ color: TIER_COLORS[d?.tier] || '#fff', fontSize: '0.85rem', margin: '0.25rem 0' }}>
+                  + {d?.name ?? drop.droneId} ×{drop.qty} <span style={{ opacity: 0.7 }}>({d?.tier})</span>
                 </p>
               );
             }

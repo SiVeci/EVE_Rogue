@@ -58,6 +58,7 @@ New frigates (Merlin, Atron) land in a similar EHP band, differentiated by *slot
 |------|---------------|---------|------------|---------|-------|
 | Merlin | 3/4/2 | 1000 | 320 m/s | 3.2s | 65,000 |
 | Atron | 3/3/3 | 840 | 400 m/s | 2.2s | 50,000 |
+| Tristan | 1/3/4 (+25 m³ bay / 25 Mbit) | 1200 | 325 m/s | 3.0s | 70,000 |
 
 Merlin trades total EHP for the highest *base shield* of any frigate (520, beating Kestrel's 500) — its identity is realized by stacking the 4 mid slots with shield extenders, not by base tank. Atron is deliberately the thinnest hull in the game (glass) in exchange for being unambiguously the fastest player-flyable ship (400 m/s, beating every NPC) and the cheapest hull (glass cannons should be cheap to replace).
 
@@ -72,6 +73,7 @@ Merlin trades total EHP for the highest *base shield* of any frigate (520, beati
 |------|---------------|---------|------------|---------|-----|-------|-----------------|
 | Catalyst | 8/2/3 | 1300 | 250 m/s | 4.5s | 65m | 180,000 | destroyers: 1 |
 | Cormorant | 7/4/2 | 1300 | 240 m/s | 4.2s | 62m | 190,000 | destroyers: 1 |
+| Algos | 4/4/4 (+40 m³ bay / 25 Mbit) | 1320 | 245 m/s | 4.3s | 63m | 185,000 | destroyers: 1, drones: 1 |
 
 ## TTK reference band
 
@@ -230,10 +232,65 @@ retroactively changed" rule below — everything else still holds.
   cargo, fit-time auto-assign, soft-lock top-up, UNDOCK warning) are the
   first line of defense.
 
+## Drones (new in v0.12)
+
+- Light scout drones share one frame; damage type is the only combat
+  difference (the four-warhead convention): Hobgoblin TH / Hornet KIN /
+  Warrior EXP / Acolyte EM. Per drone: 9 dmg / 4.0 s (2.25 panel dps = 60%
+  of a Light Electron Blaster I), optimal 800 / falloff 600 / tracking 600,
+  defense 15/15/10 at zero resists (40 raw), sig 25 m, transit 600 m/s,
+  engage orbit 750 m @ 150 m/s (the attack slowdown is what makes them
+  hittable at all), 5 m³ / 5 Mbit. T1 8,000 ISK on market; 'Integrated'
+  (Meta) ×1.10 dmg/hp at 12,000; II (T2) ×1.20 at 28,000 — both loot-only
+  via the Rogue Drones tables. Drone damage takes NO gunnery or damage-amp
+  multiplier: the drone growth axes are count (skill) and tier, not percent.
+- In-space cap = min(floor(drone_bandwidth / 5), Drones skill level).
+  Drones is a gate-type skill (default 0) on the standard cost curve:
+  L1 (1,000 SP) fields the first drone, L5 (15,000 cumulative) a full
+  squadron — same band as a T2 weapon gate. Incursus (5/5) caps at one
+  drone at any skill level; ships with bay 0 cannot load drones at all.
+- DPS budget rule for drone platforms: best-T1 weapon fill + full squadron
+  panel ≤ 110% of the class's strongest pure-weapon platform (frigate ref:
+  Kestrel 4× rockets = 18.0; destroyer ref: Catalyst 8× Ion = 37.5). A
+  drone hull also pays a 1–2 slot tax off its class slot total for the bay.
+  Tristan 1H: 4.69 + 11.25 = 15.94 (89%) · Algos 4H: 18.75 + 11.25 = 30.0
+  (80%) · full-T2-squadron recheck: 18.44 (102%) / 32.5 (87%).
+- Enemy fire switching (BattleScene constants): every DRONE_AGGRO_PERIOD
+  (6 s) with drones in space, DRONE_AGGRO_CHANCE (25%) redirects fire to
+  one random in-space drone for DRONE_AGGRO_DURATION (10 s ≈ 3–4 volleys)
+  or until it dies/docks. The cap/activation-floor gates run BEFORE target
+  resolution, so a neutralized NPC stops shooting drones too; the player
+  takes no fire while switched (~30% of fight time with a full squadron
+  out — squad tanking is priced into the loss rate). Webs never touch
+  drones, in either direction.
+- Hit resolution is entirely the standard formulas: turrets rollTurretShot
+  vs sig 25 at ~0.2 rad/s (Brawler 40% / Ravager 35% / Scout 23% /
+  Slaver 4% / Sniper ≈0 — drones are the answer to rails), missiles
+  missileDamageFactor (expR 35: engaging ×0.714, returning at 600 m/s
+  ×0.357). Rockets shred drones; recalling saves them from missiles but a
+  straight-line flee is easy meat for close turrets — both intended
+  counterplay, both free consequences of the existing formulas.
+- Loss anchor: ~1 drone per 2–3 fights averaged over the d4–8 weighted
+  pool with a full T1 squadron out (≈1/fight vs missile NPCs, ≈0.1 vs
+  close turrets, ≈0 vs Slaver/Sniper — read the node intel before
+  launching). Attrition 2,600–4,000 ISK/fight ≈ 2–3× a gun boat's ammo
+  bill (an intended tanking premium above the ammo 5–15% band); deeper is
+  bloodier (NPC damage scales, drone HP doesn't) — Meta/T2 HP and recall
+  micro are the mitigations. Tuning lever: DRONE_AGGRO_CHANCE only
+  (DURATION is the tanking-window knob, drone price is the economy knob).
+- Between nodes, surviving drones return to bay fully restored (the
+  strategic drone resource is count, not HP — keeps the loss anchor
+  path-independent and run state untouched); in-battle damage persists
+  across recall/relaunch within one fight; repair anchors know nothing
+  about drones. Losses are deducted from the bay manifest at the
+  victory/retreat confirm (settleBattleDrones); defeat loses bay +
+  in-space drones with the hull while hangar stock (droneHangar) survives;
+  a mid-battle refresh, as ever, settles nothing.
+
 ## Skill defaults
 
 Two different skill families, two different starting levels:
 - **Stat skills** (engineering, gunnery, navigation) start at **level 1** — this is `skillMult`'s baseline (1 = no bonus yet, `skillMult(1) === 1.0`).
-- **Gate skills** (destroyers, small_hybrid_turret, missiles, shield_operation, repair_systems, high_speed_maneuvering, electronic_warfare) start at **level 0** — they never feed `skillMult`, so 0 = "untrained" is the correct floor. Starting these at 1 would make a `requiredSkills: { destroyers: 1 }` gate trivially satisfied at game start, defeating the point of gating.
+- **Gate skills** (destroyers, small_hybrid_turret, missiles, shield_operation, repair_systems, high_speed_maneuvering, electronic_warfare, drones) start at **level 0** — they never feed `skillMult`, so 0 = "untrained" is the correct floor. Starting these at 1 would make a `requiredSkills: { destroyers: 1 }` gate trivially satisfied at game start, defeating the point of gating.
 
 Training cost: `1000 × (currentLevel + 1)` SP for the next level. This makes a gate skill's first level cost 1,000 SP (not free), and existing stat skills' first upgrade now costs 2,000 SP instead of the old flat 1,000 — an intentional SP-economy shift that comes with this version (see plan risk notes).

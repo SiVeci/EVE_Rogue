@@ -3,12 +3,14 @@ import { useGameStore } from '../store/gameStore';
 import { getEffectiveStats } from '../lib/shipStats';
 import { compatibleAmmo } from '../lib/ammo';
 import { AMMO } from '../data/ammo';
+import { DRONES, DRONE_BANDWIDTH_UNIT } from '../data/drones';
+import { maxDronesInSpace, droneBayUsed, canLoadDrone } from '../lib/drones';
 import { meetsRequiredSkills, describeRequiredSkills } from '../data/skills';
 import { SHIPS } from '../data/ships';
 import './FittingWindow.css';
 
 export default function FittingWindow() {
-  const { isk, activeShip, inventory, cargo, skills, ownedShips, insurance, fitModule, unfitModule, switchShip, buyInsurance, setWeaponAmmo } = useGameStore();
+  const { isk, activeShip, inventory, cargo, droneHangar, skills, ownedShips, insurance, fitModule, unfitModule, switchShip, buyInsurance, setWeaponAmmo, loadDrone, unloadDrone } = useGameStore();
 
   // Single source of truth for stats: this is the same function fitModule's
   // validation and BattleScene's combat init use, so what's shown here is
@@ -234,6 +236,51 @@ export default function FittingWindow() {
                 : cargoEntries.map(([id, qty]) => `${AMMO[id]?.name ?? id} ×${qty.toLocaleString()}`).join(' · ')}
             </span>
           </div>
+        </div>
+
+        <div className="stat-group">
+          <h3>Drone Bay</h3>
+          {!activeShip.drone_bay ? (
+            <p style={{ color: 'var(--color-text-muted)', fontSize: '0.75rem', margin: 0 }}>No drone bay.</p>
+          ) : (
+            <>
+              <div className="stat-row">
+                <span>Bay</span>
+                <span className="stat-val" style={{ color: droneBayUsed(activeShip.drones) > activeShip.drone_bay ? 'red' : '#fff' }}>
+                  {droneBayUsed(activeShip.drones)} / {activeShip.drone_bay} m³
+                </span>
+              </div>
+              <div className="stat-row">
+                <span>In space</span>
+                <span className="stat-val" style={{ fontSize: '0.72rem' }}>
+                  {maxDronesInSpace(activeShip, skills)} (bandwidth {Math.floor((activeShip.drone_bandwidth || 0) / DRONE_BANDWIDTH_UNIT)} · skill {skills.drones ?? 0})
+                </span>
+              </div>
+              {maxDronesInSpace(activeShip, skills) === 0 && (
+                <p style={{ color: '#e8a838', fontSize: '0.7rem', margin: '0.25rem 0' }}>Train Drones skill to field drones.</p>
+              )}
+              {activeShip.drones.length === 0 && (
+                <p style={{ color: 'var(--color-text-muted)', fontSize: '0.72rem', margin: '0.25rem 0' }}>No drones loaded.</p>
+              )}
+              {activeShip.drones.map((droneId, idx) => (
+                <div key={idx} className="stat-row" style={{ fontSize: '0.72rem' }}>
+                  <span>{DRONES[droneId]?.name ?? droneId}</span>
+                  <button onClick={() => unloadDrone(idx)} style={{ fontSize: '0.65rem' }}>UNLOAD</button>
+                </div>
+              ))}
+              {Object.entries(droneHangar).filter(([, qty]) => qty > 0).map(([droneId, qty]) => (
+                <div key={droneId} className="stat-row" style={{ fontSize: '0.72rem', marginTop: '0.25rem', borderTop: '1px solid rgba(255,255,255,0.05)', paddingTop: '0.25rem' }}>
+                  <span>{DRONES[droneId]?.name ?? droneId} ×{qty}</span>
+                  <button
+                    onClick={() => loadDrone(droneId)}
+                    disabled={!canLoadDrone(activeShip, activeShip.drones, droneId)}
+                    style={{ fontSize: '0.65rem', opacity: canLoadDrone(activeShip, activeShip.drones, droneId) ? 1 : 0.4 }}>
+                    LOAD
+                  </button>
+                </div>
+              ))}
+            </>
+          )}
         </div>
 
         <div className="stat-group">

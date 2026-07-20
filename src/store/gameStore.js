@@ -3,8 +3,10 @@ import { persist } from 'zustand/middleware';
 import { SHIPS } from '../data/ships';
 import { MODULES } from '../data/modules';
 import { AMMO, AMMO_LOT, STARTER_CARGO, AMMO_SAFETY_QTY, DEFAULT_AMMO } from '../data/ammo';
+import { DRONES } from '../data/drones';
 import { getEffectiveStats, skillMult } from '../lib/shipStats';
 import { defaultAmmoIdFor } from '../lib/ammo';
+import { droneBayUsed, canLoadDrone } from '../lib/drones';
 import { meetsRequiredSkills, describeRequiredSkills } from '../data/skills';
 import { SEGMENT_LAYERS } from '../lib/runmap';
 
@@ -17,10 +19,14 @@ const SAVE_VERSION = 3;
 // weapons get a family default, non-weapon high-slot modules get null.
 // freshShip/fitModule/unfitModule/migrate/merge all maintain the invariant
 // ammo.length === fittedModules.high.length.
+// activeShip.drones (v0.12) is the loadout manifest — a droneId[] array,
+// order = launch priority. It carries no ammo-style index alignment (it's
+// not parallel to any fittedModules slot), just a flat manifest.
 const freshShip = (shipId) => ({
   ...SHIPS[shipId],
   fittedModules: { high: [], mid: [], low: [] },
-  ammo: []
+  ammo: [],
+  drones: []
 });
 
 const cheapestShipPrice = () => Math.min(...Object.values(SHIPS).map((s) => s.price));
@@ -59,12 +65,19 @@ const initialState = () => ({
     shield_operation: 0,
     repair_systems: 0,
     high_speed_maneuvering: 0,
-    electronic_warfare: 0
+    electronic_warfare: 0,
+    drones: 0
   },
   // Stacked ammo cargo (v0.11) — separate from `inventory` (module inventory
   // is a per-item array; ammo is a { id: qty } stack). New saves and the
   // v2->v3 migration both grant STARTER_CARGO (FR-6: new pilots start armed).
   cargo: { ...STARTER_CARGO },
+  // Station-side drone stock (v0.12), stacked-quantity like cargo but a
+  // separate key: droneHangar survives ship loss (activeShip.drones does
+  // not), and merge's per-key validation would silently wipe drone ids if
+  // they shared cargo's AMMO-only check. Not gifted on a fresh save —
+  // drones are a pure increment, no "must have to fight" pressure like ammo.
+  droneHangar: {},
   inventory: [
     MODULES.light_electron_blaster_i,
     MODULES.light_electron_blaster_i,
@@ -106,19 +119,27 @@ export const useGameStore = create(persist((set) => ({
   advanceSegment: () => set(state => ({ deadspaceDepth: state.deadspaceDepth + SEGMENT_LAYERS })),
   // Combat loot (see src/lib/loot.js rollLoot) — a mixed-shape array: string
   // module ids route to inventory (unchanged since v0.6), { ammoId, qty }
-  // objects (v0.11) route to cargo. Unknown ids in either shape are silently
-  // dropped, same tolerance fromIds already gives save-file rehydration.
+  // objects (v0.11) route to cargo, { droneId, qty } objects (v0.12) route to
+  // droneHangar. Unknown ids in any shape are silently dropped, same
+  // tolerance fromIds already gives save-file rehydration.
   addLoot: (drops) => set(state => {
     const moduleIds = drops.filter((d) => typeof d === 'string');
     const ammoDrops = drops.filter((d) => d && typeof d === 'object' && d.ammoId);
+    const droneDrops = drops.filter((d) => d && typeof d === 'object' && d.droneId);
     const cargo = { ...state.cargo };
     for (const { ammoId, qty } of ammoDrops) {
       if (!AMMO[ammoId]) continue;
       cargo[ammoId] = (cargo[ammoId] ?? 0) + qty;
     }
+    const droneHangar = { ...state.droneHangar };
+    for (const { droneId, qty } of droneDrops) {
+      if (!DRONES[droneId]) continue;
+      droneHangar[droneId] = (droneHangar[droneId] ?? 0) + qty;
+    }
     return {
       inventory: [...state.inventory, ...fromIds(moduleIds)],
-      cargo
+      cargo,
+      droneHangar
     };
   }),
   trainSkill: (skillName, cost) => set(state => {
@@ -216,6 +237,68 @@ export const useGameStore = create(persist((set) => ({
     return { cargo, activeShip };
   }),
 
+  // Drones (v0.12): per-unit market trade (unlike ammo's whole-lot trade —
+  // a drone is bought/sold at module granularity), mirroring buyModule's/
+  // sellModule's silent-failure pattern.
+  buyDrone: (droneId) => set(state => {
+    const drone = DRONES[droneId];
+    if (!drone || state.isk < drone.price) return state;
+    return {
+      isk: state.isk - drone.price,
+      droneHangar: { ...state.droneHangar, [droneId]: (state.droneHangar[droneId] ?? 0) + 1 }
+    };
+  }),
+  sellDrone: (droneId) => set(state => {
+    const drone = DRONES[droneId];
+    const qty = state.droneHangar[droneId] ?? 0;
+    if (!drone || qty <= 0) return state;
+    return {
+      isk: state.isk + Math.round(drone.price * 0.5),
+      droneHangar: { ...state.droneHangar, [droneId]: qty - 1 }
+    };
+  }),
+  // Hangar -> loadout manifest. Gated by both hangar stock and the bay's
+  // volume budget (canLoadDrone); silently no-ops otherwise (buy*/loadDrone
+  // family convention — no new alert paths this version).
+  loadDrone: (droneId) => set(state => {
+    if (!state.activeShip) return state;
+    const qty = state.droneHangar[droneId] ?? 0;
+    if (qty <= 0 || !DRONES[droneId]) return state;
+    if (!canLoadDrone(state.activeShip, state.activeShip.drones, droneId)) return state;
+    return {
+      droneHangar: { ...state.droneHangar, [droneId]: qty - 1 },
+      activeShip: { ...state.activeShip, drones: [...state.activeShip.drones, droneId] }
+    };
+  }),
+  // Loadout manifest -> hangar, by manifest index (order matters: launch
+  // priority is expressed by load order, so removal is index-addressed).
+  unloadDrone: (index) => set(state => {
+    if (!state.activeShip) return state;
+    const droneId = state.activeShip.drones[index];
+    if (!droneId) return state;
+    const drones = [...state.activeShip.drones];
+    drones.splice(index, 1);
+    return {
+      activeShip: { ...state.activeShip, drones },
+      droneHangar: { ...state.droneHangar, [droneId]: (state.droneHangar[droneId] ?? 0) + 1 }
+    };
+  }),
+  // Battle-end drone loss settlement (v0.12): victory/retreat confirm call
+  // this with the ids of drones destroyed this fight — each is spliced out
+  // of the manifest once (mirrors settleBattleAmmo's tolerance for unknown/
+  // empty input). Defeat never calls this: the destroyed hull's entire
+  // manifest is lost with it (shipDestroyed already discards activeShip),
+  // and droneHangar (station stock) is untouched either way.
+  settleBattleDrones: ({ lost }) => set(state => {
+    if (!lost || !lost.length || !state.activeShip) return state;
+    const drones = [...state.activeShip.drones];
+    for (const droneId of lost) {
+      const idx = drones.indexOf(droneId);
+      if (idx > -1) drones.splice(idx, 1);
+    }
+    return { activeShip: { ...state.activeShip, drones } };
+  }),
+
   // Market
   buyModule: (moduleId) => set(state => {
     const module = MODULES[moduleId];
@@ -264,11 +347,19 @@ export const useGameStore = create(persist((set) => ({
           ...state.activeShip.fittedModules.low
         ]
       : [];
+    // Drones strip back to the hangar by id count, same as fittings strip
+    // back to inventory — the easiest v0.12 touchpoint to miss (skipping
+    // this evaporates the manifest instead of banking it).
+    const droneHangar = { ...state.droneHangar };
+    for (const droneId of state.activeShip?.drones ?? []) {
+      droneHangar[droneId] = (droneHangar[droneId] ?? 0) + 1;
+    }
     return {
       // Boarding another hull voids any policy on the old one — no refund.
       inventory: [...state.inventory, ...stripped],
       activeShip: freshShip(shipId),
-      insurance: null
+      insurance: null,
+      droneHangar
     };
   }),
 
@@ -429,6 +520,7 @@ export const useGameStore = create(persist((set) => ({
     inventory: toIds(state.inventory),
     ownedShips: state.ownedShips,
     cargo: state.cargo,
+    droneHangar: state.droneHangar,
     activeShip: state.activeShip
       ? {
           shipId: state.activeShip.id,
@@ -437,7 +529,8 @@ export const useGameStore = create(persist((set) => ({
             mid: toIds(state.activeShip.fittedModules.mid),
             low: toIds(state.activeShip.fittedModules.low)
           },
-          ammo: state.activeShip.ammo
+          ammo: state.activeShip.ammo,
+          drones: state.activeShip.drones
         }
       : null,
     insurance: state.insurance
@@ -499,6 +592,14 @@ export const useGameStore = create(persist((set) => ({
           ammo = fromIds(rawHighIds).map((m) => defaultAmmoIdFor(m));
         }
 
+        // activeShip.drones (v0.12): unknown ids filtered out (fromIds'
+        // silent-drop tolerance), then truncated from the tail against the
+        // boarded hull's own drone_bay if a hand-edited save overloaded it —
+        // same defensive shape as the cargo/ammo validation above.
+        let drones = (Array.isArray(persisted.activeShip?.drones) ? persisted.activeShip.drones : [])
+          .filter((id) => DRONES[id]);
+        while (droneBayUsed(drones) > (SHIPS[shipId].drone_bay || 0)) drones.pop();
+
         activeShip = {
           ...SHIPS[shipId],
           fittedModules: {
@@ -506,7 +607,8 @@ export const useGameStore = create(persist((set) => ({
             mid: fromIds(persisted.activeShip?.fitted?.mid),
             low: fromIds(persisted.activeShip?.fitted?.low)
           },
-          ammo
+          ammo,
+          drones
         };
         // The boarded hull is always an owned hull
         if (!ownedShips.includes(shipId)) ownedShips.push(shipId);
@@ -522,6 +624,16 @@ export const useGameStore = create(persist((set) => ({
       if (persisted.cargo && typeof persisted.cargo === 'object') {
         for (const [id, qty] of Object.entries(persisted.cargo)) {
           if (AMMO[id] && Number.isFinite(qty) && qty >= 0) cargo[id] = Math.floor(qty);
+        }
+      }
+
+      // droneHangar (v0.12): same per-key validation shape as cargo, against
+      // DRONES instead of AMMO — a separate stock, so it needs its own pass
+      // rather than sharing cargo's AMMO-keyed check.
+      const droneHangar = {};
+      if (persisted.droneHangar && typeof persisted.droneHangar === 'object') {
+        for (const [id, qty] of Object.entries(persisted.droneHangar)) {
+          if (DRONES[id] && Number.isFinite(qty) && qty >= 0) droneHangar[id] = Math.floor(qty);
         }
       }
 
@@ -555,6 +667,7 @@ export const useGameStore = create(persist((set) => ({
         inventory: fromIds(persisted.inventory),
         ownedShips,
         cargo: finalCargo,
+        droneHangar,
         activeShip,
         insurance
       };

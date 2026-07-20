@@ -136,6 +136,39 @@ export const SHIPS = {
     drone_bay: 0
   },
 
+  tristan: {
+    id: 'tristan',
+    name: 'Tristan',
+    faction: 'Gallente',
+    class: 'Frigate',
+    price: 70000,
+    description: 'A drone-bay frigate: one high slot for a turret or a neut, the rest of its firepower launched. Fights from a squadron, not a gun rack.',
+    slots: {
+      high: 1,
+      mid: 3,
+      low: 4
+    },
+    resources: {
+      pg: 38,
+      cpu: 145,
+      cap_capacity: 380,
+      cap_recharge: 175
+    },
+    defense: {
+      shield: { hp: 380, em: 0, th: 20, kin: 40, exp: 50 },
+      armor: { hp: 420, em: 50, th: 35, kin: 35, exp: 10 },
+      hull: { hp: 400, em: 0, th: 0, kin: 0, exp: 0 },
+      sig_radius: 40
+    },
+    mobility: {
+      mass: 1100000,
+      base_speed: 325,
+      agility: 3.0
+    },
+    drone_bandwidth: 25,
+    drone_bay: 25
+  },
+
   catalyst: {
     id: 'catalyst',
     name: 'Catalyst',
@@ -202,5 +235,39 @@ export const SHIPS = {
     },
     drone_bandwidth: 0,
     drone_bay: 0
+  },
+
+  algos: {
+    id: 'algos',
+    name: 'Algos',
+    faction: 'Gallente',
+    class: 'Destroyer',
+    price: 185000,
+    requiredSkills: { destroyers: 1, drones: 1 },
+    description: 'A hybrid destroyer/drone platform: four turrets backed by a 40 m³ bay deep enough to carry backup drones for mid-fight relaunch.',
+    slots: {
+      high: 4,
+      mid: 4,
+      low: 4
+    },
+    resources: {
+      pg: 70,
+      cpu: 240,
+      cap_capacity: 430,
+      cap_recharge: 195
+    },
+    defense: {
+      shield: { hp: 420, em: 0, th: 20, kin: 40, exp: 50 },
+      armor: { hp: 470, em: 50, th: 35, kin: 35, exp: 10 },
+      hull: { hp: 430, em: 0, th: 0, kin: 0, exp: 0 },
+      sig_radius: 63
+    },
+    mobility: {
+      mass: 2250000,
+      base_speed: 245,
+      agility: 4.3
+    },
+    drone_bandwidth: 25,
+    drone_bay: 40
   }
 };

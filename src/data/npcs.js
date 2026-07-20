@@ -372,6 +372,102 @@ export const NPCS = {
       { ammoId: 'nova_light_missile', qty: 50, chance: 0.15 }
     ],
     baseReward: 24000
+  },
+
+  // Rogue Drones (v0.12 FR-6) — a fifth faction signature, deliberately
+  // reusing Sansha's Nation's exact weak-EM resist shape (docs/balance.md:
+  // "a fifth faction necessarily repeats one of the four types; the counter-
+  // teaching stays consistent — Mjolnir warhead / Acolyte drone, same
+  // answer as Sansha"). Both weapon types (hybrid/missile) are existing
+  // branches — no new NPC mechanic.
+  rogue_alvi: {
+    id: 'rogue_alvi',
+    name: 'Rogue Drone Alvi',
+    class: 'Frigate',
+    faction: 'Rogue Drones',
+    defense: {
+      shield: { hp: 200, em: 5, th: 30, kin: 35, exp: 40 },
+      armor: { hp: 210, em: 5, th: 30, kin: 30, exp: 30 },
+      hull: { hp: 200, em: 10, th: 40, kin: 40, exp: 40 },
+      sig_radius: 33 // meters — a small drone-swarm signature
+    },
+    mobility: {
+      base_speed: 360,
+      agility: 2.4
+    },
+    cap_capacity: 240, // GJ — v0.10 invariant: peak recharge 4.44 / standing 2.67 = 1.67x margin
+    cap_recharge: 135,
+    ai: {
+      orbitRange: 0.8
+    },
+    weapon: {
+      name: 'Rogue Blaster Swarm',
+      type: 'hybrid_weapon',
+      stats: {
+        optimal: 1200,
+        falloff: 1600,
+        tracking: 300,
+        rof: 3.0,
+        damage: { em: 0, th: 8, kin: 8, exp: 0 },
+        cap_use: 8
+      }
+    },
+    lootTable: [
+      { moduleId: 'co_processor_i', chance: 0.12 },
+      { moduleId: 'damage_control_i', chance: 0.09 },
+      { moduleId: 'nanofiber_internal_structure_i', chance: 0.08 },
+      { moduleId: 'railgun_125mm_ii', chance: 0.06 },
+      { droneId: 'hobgoblin_i', qty: 1, chance: 0.10 },
+      { droneId: 'integrated_hobgoblin', qty: 1, chance: 0.08 },
+      { ammoId: 'mjolnir_rocket', qty: 60, chance: 0.15 }
+    ],
+    baseReward: 23000
+  },
+
+  // Missile-armed Rogue Drones sibling — cap_use 0 (rocket-family immunity
+  // to neut suppression, same structural rule as every other rocket NPC).
+  rogue_alvum: {
+    id: 'rogue_alvum',
+    name: 'Rogue Drone Alvum',
+    class: 'Frigate',
+    faction: 'Rogue Drones',
+    defense: {
+      shield: { hp: 260, em: 5, th: 30, kin: 35, exp: 40 },
+      armor: { hp: 240, em: 5, th: 30, kin: 30, exp: 30 },
+      hull: { hp: 240, em: 10, th: 40, kin: 40, exp: 40 },
+      sig_radius: 44
+    },
+    mobility: {
+      base_speed: 280,
+      agility: 3.1
+    },
+    cap_capacity: 220, // GJ — v0.10; cap_use 0 weapon, structurally neut-immune
+    cap_recharge: 145,
+    ai: {
+      orbitRange: 3.0
+    },
+    weapon: {
+      name: 'Rogue Missile Swarm',
+      type: 'missile_weapon',
+      stats: {
+        range: 9000,
+        rof: 3.2,
+        damage: { em: 0, th: 5, kin: 9, exp: 0 },
+        cap_use: 0,
+        explosion_radius: 35,
+        explosion_velocity: 150
+      }
+    },
+    lootTable: [
+      { moduleId: 'ballistic_control_system_i', chance: 0.12 },
+      { moduleId: 'co_processor_i', chance: 0.10 },
+      { moduleId: 'overdrive_injector_system_i', chance: 0.08 },
+      { moduleId: 'light_missile_launcher_ii', chance: 0.06 },
+      { droneId: 'acolyte_i', qty: 1, chance: 0.10 },
+      { droneId: 'hobgoblin_ii', qty: 1, chance: 0.04 },
+      { ammoId: 'mjolnir_light_missile', qty: 50, chance: 0.15 }
+    ],
+    baseReward: 26000
   }
 };
 
@@ -388,7 +484,9 @@ export const ENCOUNTER_UNLOCKS = [
   { depth: 5, npc: 'serpentis_scout', weight: 2 },
   { depth: 6, npc: 'sansha_ravager', weight: 2 },
   { depth: 7, npc: 'angel_webber', weight: 1 },
-  { depth: 8, npc: 'angel_hunter', weight: 1 }
+  { depth: 8, npc: 'angel_hunter', weight: 1 },
+  { depth: 6, npc: 'rogue_alvi', weight: 2 },
+  { depth: 8, npc: 'rogue_alvum', weight: 1 }
 ];
 
 export function availableNpcs(depth) {

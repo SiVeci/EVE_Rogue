@@ -2,6 +2,7 @@ import React from 'react';
 import { useGameStore } from '../store/gameStore';
 import { MODULES } from '../data/modules';
 import { AMMO, AMMO_LOT } from '../data/ammo';
+import { DRONES } from '../data/drones';
 import { SHIPS } from '../data/ships';
 import { TIER_COLORS } from '../lib/tiers';
 
@@ -69,8 +70,15 @@ const ammoSummary = (a) => {
   return '';
 };
 
+// One-line summary per drone (v0.12) — mirrors ammoSummary above.
+const droneSummary = (d) => {
+  const dps = (Object.values(d.weapon.damage).reduce((a, b) => a + b, 0) / d.weapon.rof).toFixed(2);
+  const hp = d.defense.shield.hp + d.defense.armor.hp + d.defense.hull.hp;
+  return `${dps} dps · ${hp} HP · ${d.volume} m³`;
+};
+
 export default function MarketWindow() {
-  const { isk, inventory, cargo, ownedShips, activeShip, buyModule, sellModule, buyShip, buyAmmo, sellAmmo } = useGameStore();
+  const { isk, inventory, cargo, droneHangar, ownedShips, activeShip, buyModule, sellModule, buyShip, buyAmmo, sellAmmo, buyDrone, sellDrone } = useGameStore();
 
   // Meta/T2 are loot-only (see src/lib/loot.js) — the market only stocks T1.
   const modulesBySlot = (slot) => Object.values(MODULES).filter((m) => m.slot === slot && m.tier === 'T1');
@@ -159,6 +167,27 @@ export default function MarketWindow() {
             </div>
           );
         })}
+
+        {/* DRONES (v0.12) — Meta/T2 are loot-only (FR-6), the market only stocks T1 */}
+        <h3 style={{ color: 'var(--color-text-muted)', fontSize: '0.8rem', letterSpacing: '1px', margin: '1rem 0 0.5rem' }}>DRONES</h3>
+        {Object.values(DRONES).filter((d) => d.tier === 'T1').map((d) => (
+          <div key={d.id} style={rowStyle}>
+            <span style={{ color: TIER_COLORS[d.tier] || 'var(--color-text-muted)', fontSize: '0.7rem', width: '2.5rem' }}>{d.tier}</span>
+            <div style={{ flex: 1 }}>
+              <span style={{ color: '#fff', fontSize: '0.9rem' }}>{d.name}</span>
+              <span style={{ color: 'var(--color-text-muted)', fontSize: '0.75rem', display: 'block' }}>
+                {droneSummary(d)} · own {(droneHangar[d.id] ?? 0).toLocaleString()}
+              </span>
+            </div>
+            <span style={{ color: 'var(--color-gallente)', fontSize: '0.85rem' }}>{d.price.toLocaleString()} ISK</span>
+            <button
+              onClick={() => buyDrone(d.id)}
+              disabled={isk < d.price}
+              style={{ opacity: isk < d.price ? 0.4 : 1, cursor: isk < d.price ? 'not-allowed' : 'pointer' }}>
+              Buy
+            </button>
+          </div>
+        ))}
       </div>
 
       {/* RIGHT: SELL FROM HANGAR */}
@@ -194,6 +223,27 @@ export default function MarketWindow() {
               </div>
               <button onClick={() => sellAmmo(id)}>
                 Sell all ({Math.round(qty * a.price * 0.5).toLocaleString()})
+              </button>
+            </div>
+          );
+        })}
+
+        <h3 style={{ color: '#fff', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '0.5rem', margin: '1.5rem 0 1rem' }}>SELL DRONES (HANGAR)</h3>
+        <p style={{ color: 'var(--color-text-muted)', fontSize: '0.75rem', marginBottom: '1rem' }}>Per-unit, 50% of market price.</p>
+        {Object.entries(droneHangar).filter(([, qty]) => qty > 0).length === 0 && (
+          <p style={{ color: 'var(--color-text-muted)', fontSize: '0.8rem' }}>Drone hangar is empty.</p>
+        )}
+        {Object.entries(droneHangar).filter(([, qty]) => qty > 0).map(([id, qty]) => {
+          const d = DRONES[id];
+          if (!d) return null;
+          return (
+            <div key={id} style={rowStyle}>
+              <span style={{ color: TIER_COLORS[d.tier] || 'var(--color-text-muted)', fontSize: '0.7rem', width: '2.5rem' }}>{d.tier}</span>
+              <div style={{ flex: 1 }}>
+                <span style={{ color: '#fff', fontSize: '0.85rem' }}>{d.name} ×{qty.toLocaleString()}</span>
+              </div>
+              <button onClick={() => sellDrone(id)}>
+                Sell {Math.round(d.price * 0.5).toLocaleString()}
               </button>
             </div>
           );
