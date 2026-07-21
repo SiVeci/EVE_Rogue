@@ -5,13 +5,14 @@ import { AMMO } from '../data/ammo';
 import { DRONES } from '../data/drones';
 import { TIER_COLORS } from '../lib/tiers';
 
-// Weapon intel line shown on each node so the player can refit before diving
-const threatLabel = (enc) => {
-  const w = enc.weapon;
+// Weapon intel line shown on each node so the player can refit before diving.
+// Takes a single formation member (v0.13) — internals unchanged.
+const threatLabel = (member) => {
+  const w = member.weapon;
   const range = w.type === 'hybrid_weapon'
     ? `Turrets · optimal ${(w.stats.optimal / 1000).toFixed(1)} km`
     : `Missiles · range ${(w.stats.range / 1000).toFixed(1)} km`;
-  return enc.ewar ? `${range} · Stasis Web` : range;
+  return member.ewar ? `${range} · Stasis Web` : range;
 };
 
 // Primary damage type(s) so the player can pick a resist swap before diving
@@ -25,13 +26,14 @@ function primaryDamageTypes(damage) {
 }
 
 // Faction name + primary damage type badges — the "what do I fit against
-// this?" line shown on every combat node.
-function FactionIntel({ enc }) {
+// this?" line shown on every combat node. Takes a single formation member
+// (v0.13) — internals unchanged.
+function FactionIntel({ member }) {
   return (
     <div style={{ marginTop: '0.2rem' }}>
-      <p style={{ color: 'var(--color-text-muted)', fontSize: '0.65rem', margin: 0 }}>{enc.faction}</p>
+      <p style={{ color: 'var(--color-text-muted)', fontSize: '0.65rem', margin: 0 }}>{member.faction}</p>
       <div style={{ display: 'flex', gap: '3px', justifyContent: 'center', marginTop: '2px' }}>
-        {primaryDamageTypes(enc.weapon.stats.damage).map((t) => (
+        {primaryDamageTypes(member.weapon.stats.damage).map((t) => (
           <span key={t} style={{
             color: DAMAGE_TYPE_COLORS[t], fontSize: '0.55rem',
             border: `1px solid ${DAMAGE_TYPE_COLORS[t]}`, borderRadius: '3px', padding: '0px 3px'
@@ -44,12 +46,24 @@ function FactionIntel({ enc }) {
   );
 }
 
+// Inline (non-boxed-row) damage badges for a multi-member compact line.
+function DamageBadges({ member }) {
+  return primaryDamageTypes(member.weapon.stats.damage).map((t) => (
+    <span key={t} style={{
+      color: DAMAGE_TYPE_COLORS[t], fontSize: '0.5rem',
+      border: `1px solid ${DAMAGE_TYPE_COLORS[t]}`, borderRadius: '3px', padding: '0px 2px', marginLeft: '3px'
+    }}>
+      {DAMAGE_TYPE_LABELS[t]}
+    </span>
+  ));
+}
+
 // Layout constants shared by node cards and the SVG edge overlay so both are
 // derived from the same numbers instead of measured from the DOM (keeps this
 // component SSR-safe and testable from a plain fixture).
 const COL_WIDTH = 200;
 const COL_GAP = 40;
-const ROW_HEIGHT = 120;
+const ROW_HEIGHT = 132; // v0.13: raised from 120 so a 3-member intel card fits
 const ROW_GAP = 24;
 const MAX_ROWS = 3;
 const MAP_WIDTH = SEGMENT_LAYERS * COL_WIDTH + (SEGMENT_LAYERS - 1) * COL_GAP;
@@ -113,15 +127,41 @@ function NodeCardBody({ node }) {
     );
   }
   const enc = node.encounter;
+  // Single-member node: the pre-v0.13 markup verbatim, fed members[0]
+  // (zero visual regression for the whole d1–5 band).
+  if (enc.members.length === 1) {
+    const member = enc.members[0];
+    return (
+      <>
+        <h4 style={{ color: node.type === 'elite' ? '#ff4a4a' : '#5a96ff', margin: '0.35rem 0 0.15rem', fontSize: '0.75rem' }}>
+          {TYPE_LABELS[node.type]}
+        </h4>
+        <p style={{ color: '#fff', fontSize: '0.78rem', margin: 0 }}>{member.name}</p>
+        <p style={{ color: 'var(--color-text-muted)', fontSize: '0.62rem', margin: '2px 0 0' }}>{threatLabel(member)}</p>
+        <FactionIntel member={member} />
+        <p style={{ color: 'var(--color-gallente)', fontSize: '0.68rem', margin: '2px 0 0' }}>Bounty: {enc.reward.toLocaleString()} ISK</p>
+      </>
+    );
+  }
+  // Multi-member formation (v0.13 FR-5): formation badge + one compact line
+  // per member (name / faction / range summary / bounty / damage badges) +
+  // a group-total bounty line — the avoid/refit decision is fully readable
+  // before undocking.
   return (
     <>
-      <h4 style={{ color: node.type === 'elite' ? '#ff4a4a' : '#5a96ff', margin: '0.35rem 0 0.15rem', fontSize: '0.75rem' }}>
-        {TYPE_LABELS[node.type]}
+      <h4 style={{ color: node.type === 'elite' ? '#ff4a4a' : '#5a96ff', margin: '0.3rem 0 0.1rem', fontSize: '0.72rem' }}>
+        {TYPE_LABELS[node.type]} ×{enc.members.length}
       </h4>
-      <p style={{ color: '#fff', fontSize: '0.78rem', margin: 0 }}>{enc.name}</p>
-      <p style={{ color: 'var(--color-text-muted)', fontSize: '0.62rem', margin: '2px 0 0' }}>{threatLabel(enc)}</p>
-      <FactionIntel enc={enc} />
-      <p style={{ color: 'var(--color-gallente)', fontSize: '0.68rem', margin: '2px 0 0' }}>Bounty: {enc.reward.toLocaleString()} ISK</p>
+      {enc.members.map((member, i) => (
+        <div key={i} style={{ margin: '1px 0' }}>
+          <p style={{ color: '#fff', fontSize: '0.68rem', margin: 0 }}>{member.name}</p>
+          <p style={{ color: 'var(--color-text-muted)', fontSize: '0.55rem', margin: 0 }}>
+            {member.faction} · {threatLabel(member)} · {member.reward.toLocaleString()} ISK
+            <DamageBadges member={member} />
+          </p>
+        </div>
+      ))}
+      <p style={{ color: 'var(--color-gallente)', fontSize: '0.65rem', margin: '2px 0 0' }}>Bounty: {enc.reward.toLocaleString()} ISK</p>
     </>
   );
 }

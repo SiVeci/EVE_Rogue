@@ -50,7 +50,9 @@ function formatDistance(km) {
   return km < 10 ? `${Math.round(km * 1000).toLocaleString()} m` : `${km.toFixed(1)} km`;
 }
 
-function ShipMesh({ positionRef, rotationRef, color, isPlayer }) {
+// onClick (v0.13, optional): scene-side target picking for enemy members —
+// the HUD member list is the guaranteed path, this is the enhancement.
+function ShipMesh({ positionRef, rotationRef, color, isPlayer, onClick }) {
   const meshRef = useRef();
 
   useFrame(() => {
@@ -65,7 +67,7 @@ function ShipMesh({ positionRef, rotationRef, color, isPlayer }) {
   });
 
   return (
-    <group ref={meshRef} scale={0.25}>
+    <group ref={meshRef} scale={0.25} onClick={onClick}>
       <mesh castShadow receiveShadow>
         <boxGeometry args={isPlayer ? [2, 1, 4] : [3, 1.5, 5]} />
         <meshStandardMaterial color={color} roughness={0.3} metalness={0.8} />
@@ -101,6 +103,26 @@ function DroneMesh({ positionRef, color }) {
         <meshStandardMaterial color={color} emissive={color} emissiveIntensity={0.4} roughness={0.4} metalness={0.6} />
       </mesh>
     </group>
+  );
+}
+
+// Flat ring under the current main target (v0.13 FR-4 presentation) —
+// positionRef-driven like ShipMesh, never remounts per frame.
+function TargetRing({ positionRef }) {
+  const meshRef = useRef();
+
+  useFrame(() => {
+    if (meshRef.current) {
+      meshRef.current.position.x = positionRef.current.x;
+      meshRef.current.position.z = positionRef.current.z;
+    }
+  });
+
+  return (
+    <mesh ref={meshRef} rotation={[-Math.PI / 2, 0, 0]} position={[0, -0.4, 0]}>
+      <torusGeometry args={[0.7, 0.02, 8, 48]} />
+      <meshBasicMaterial color="#4deeea" transparent opacity={0.7} />
+    </mesh>
   );
 }
 
@@ -158,16 +180,23 @@ export default function BattleScene({ encounter, nodeType = 'patrol', depth, ini
     hull: resumedHp.hull,
     cap: eff.resources.cap_capacity
   });
-  const [enemyHud, setEnemyHud] = useState({
-    shield: enemy.defense.shield.hp,
-    armor: enemy.defense.armor.hp,
-    hull: enemy.defense.hull.hp,
-    cap: enemy.cap_capacity ?? null
-  });
+  // Enemy HUD is an array of member snapshots (v0.13) — one card per member.
+  const [enemyHud, setEnemyHud] = useState(enemy.members.map((m) => ({
+    name: m.name,
+    shield: m.defense.shield.hp,
+    armor: m.defense.armor.hp,
+    hull: m.defense.hull.hp,
+    cap: m.cap_capacity ?? null,
+    alive: true
+  })));
   const [distance, setDistance] = useState(4);
   const [speed, setSpeed] = useState(0); // m/s
   const [command, setCommand] = useState({ type: 'stop', radius: 0 });
-  const [combatLog, setCombatLog] = useState([introLog || "Gate activation complete. Hostile on scan."]);
+  const [combatLog, setCombatLog] = useState([
+    introLog || (enemy.size > 1
+      ? `Gate activation complete. ${enemy.size} hostiles on scan.`
+      : "Gate activation complete. Hostile on scan.")
+  ]);
   const [outcome, setOutcome] = useState(null); // null | 'victory' | 'defeat' | 'retreat'
   const [lootIds, setLootIds] = useState([]); // mixed: module id strings and { ammoId, qty } (v0.11)
   const [alignHud, setAlignHud] = useState(null); // null | seconds remaining (ALIGN & WARP)
@@ -196,32 +225,51 @@ export default function BattleScene({ encounter, nodeType = 'patrol', depth, ini
 
   // Physics Refs — all simulation state lives here and is mutated every frame
   const playerPos = useRef(new THREE.Vector3(...PLAYER_SPAWN));
-  const enemyPos = useRef(new THREE.Vector3(...ENEMY_SPAWN));
   const playerVel = useRef(new THREE.Vector3());
-  const enemyVel = useRef(new THREE.Vector3());
   const playerRot = useRef(Math.PI / 2);  // spawns facing each other along +x / -x
-  const enemyRot = useRef(-Math.PI / 2);
   const capRef = useRef(eff.resources.cap_capacity);
   const playerHp = useRef({
     shield: resumedHp.shield,
     armor: resumedHp.armor,
     hull: resumedHp.hull
   });
-  const enemyHp = useRef({
-    shield: enemy.defense.shield.hp,
-    armor: enemy.defense.armor.hp,
-    hull: enemy.defense.hull.hp
-  });
-  const enemyWeaponTimer = useRef(1.5); // grace period before the first volley
-  // NPC capacitor (v0.10): mounts full every fight (same semantics as the
-  // player's capRef, never part of the HP snapshot). Infinity is the
-  // documented fallback for any NPC without cap fields — the suppression
-  // check below is guarded so it never fires against an Infinity pool.
-  const enemyCapRef = useRef(enemy.cap_capacity ?? Infinity);
-  const enemyWeaponPoweredRef = useRef(true); // drives the powers-down/back-online log transitions
-  const enemyEwarTimer = useRef(0); // enemy ewar activation cadence, mirrors the player module loop
-  const enemyEwarPoweredRef = useRef(true);
-  const angularVelocity = useRef(0);
+  // Enemy formation (v0.13): one entry per member, mirroring dronesRef's
+  // "all sim state lives in refs, one object per entity" pattern — this
+  // absorbs the nine former enemy-side refs (pos/vel/rot/hp/weaponTimer/
+  // cap/weaponPowered/ewarTimer/ewarPowered) plus enemyAggroRef.
+  // - weaponTimer: 1.5 + 0.5×i staggers first volleys 0.5s apart (a solo
+  //   member keeps the exact 1.5s grace of v0.12).
+  // - cap: Infinity is the documented v0.10 fallback for an NPC without cap
+  //   fields — the suppression check never fires against an Infinity pool.
+  // - aggro: per-member drone fire-switching bookkeeping (independent rolls,
+  //   no coordination — enemy cooperation is a non-goal).
+  // - webbed / dist / distMeters / dirTo / angVel: recomputed every frame by
+  //   the geometry stage (webbed by the player's own web, main target only).
+  const enemiesRef = useRef(enemy.members.map((def, i) => ({
+    def,
+    hp: { shield: def.defense.shield.hp, armor: def.defense.armor.hp, hull: def.defense.hull.hp },
+    pos: new THREE.Vector3(ENEMY_SPAWN[0], 0, ENEMY_SPAWN[2] + (i - (enemy.members.length - 1) / 2) * 1.2),
+    vel: new THREE.Vector3(),
+    rot: -Math.PI / 2,
+    weaponTimer: 1.5 + 0.5 * i,
+    cap: def.cap_capacity ?? Infinity,
+    weaponPowered: true,
+    ewarTimer: 0,
+    ewarPowered: true,
+    aggro: { droneIdx: null, timer: 0, checkTimer: DRONE_AGGRO_PERIOD },
+    webbed: false,
+    dist: 4,
+    distMeters: 4000,
+    dirTo: new THREE.Vector3(1, 0, 0),
+    angVel: 0,
+    alive: true
+  })));
+  const targetIdxRef = useRef(0); // the player's single main target (FR-4)
+  // FR-6 kill lock-in: bounty/SP of destroyed members accumulate here at
+  // death-sweep time and are consumed ONLY at the retreat confirm button
+  // (victory settles from the aggregate sum fields — provably equal; defeat
+  // discards this ref with the component).
+  const killedRef = useRef({ isk: 0, sp: 0 });
   const battleOverRef = useRef(false);
   const alignRef = useRef(null); // null | seconds remaining until warp-out
   const commandRef = useRef({ type: 'stop', radius: 0 });
@@ -276,11 +324,8 @@ export default function BattleScene({ encounter, nodeType = 'patrol', depth, ini
       };
     })
   );
-  // Enemy fire-switching bookkeeping (v0.12) — a plain ref, mirrors alignRef:
-  // droneIdx is the index into dronesRef.current currently being fired on
-  // (null = targeting the player), timer counts down the aggro window,
-  // checkTimer paces the next redirect roll while targeting the player.
-  const enemyAggroRef = useRef({ droneIdx: null, timer: 0, checkTimer: DRONE_AGGRO_PERIOD });
+  // Enemy fire-switching bookkeeping (v0.12) lives per member since v0.13 —
+  // see the `aggro` object inside each enemiesRef entry above.
 
   const addLog = (msg) => {
     setCombatLog(prev => [msg, ...prev].slice(0, 6));
@@ -366,9 +411,21 @@ export default function BattleScene({ encounter, nodeType = 'patrol', depth, ini
         ? Math.max(0, Math.round(((d.hp.shield + d.hp.armor + d.hp.hull) /
             (d.def.defense.shield.hp + d.def.defense.armor.hp + d.def.defense.hull.hp)) * 100))
         : 0,
-      locked: enemyAggroRef.current.droneIdx === i
+      locked: enemiesRef.current.some((e) => e.alive && e.aggro.droneIdx === i)
     }))
   });
+
+  // Main-target switching (v0.13 FR-4): independent handler alongside
+  // startAlign/launchDrones (not routed through commandRef). Dual entry:
+  // HUD member card onClick and 3D ShipMesh onClick.
+  const setTarget = (i) => {
+    if (battleOverRef.current) return;
+    const m = enemiesRef.current[i];
+    if (!m || !m.alive || i === targetIdxRef.current) return;
+    targetIdxRef.current = i;
+    addLog(`Target locked: ${m.def.name}.`);
+    setForceRender(Date.now());
+  };
 
   // LAUNCH / RECALL (v0.12 FR-3): independent command entry alongside
   // startAlign/cancelAlign — full-squadron instructions, no single-drone
@@ -423,7 +480,14 @@ export default function BattleScene({ encounter, nodeType = 'patrol', depth, ini
       hull: playerHp.current.hull,
       cap: Math.floor(capRef.current)
     });
-    setEnemyHud({ ...enemyHp.current, cap: enemy.cap_capacity ? Math.floor(enemyCapRef.current) : null });
+    setEnemyHud(enemiesRef.current.map((e) => ({
+      name: e.def.name,
+      shield: e.hp.shield,
+      armor: e.hp.armor,
+      hull: e.hp.hull,
+      cap: e.def.cap_capacity != null ? Math.floor(e.cap) : null,
+      alive: e.alive
+    })));
     setDistance(dist);
     setSpeed(playerVel.current.length() * 1000);
     setAlignHud(alignRef.current);
@@ -449,13 +513,15 @@ export default function BattleScene({ encounter, nodeType = 'patrol', depth, ini
     battleOverRef.current = true;
     modulesStateRef.current.forEach(m => { m.active = false; });
     playerVel.current.set(0, 0, 0);
-    enemyVel.current.set(0, 0, 0);
+    enemiesRef.current.forEach((e) => e.vel.set(0, 0, 0));
     addLog(result === 'victory' ? 'Target destroyed!' : result === 'retreat' ? 'Align complete — warping out.' : 'Hull breach — your ship is lost!');
     // Rolled here (battle-result time), not on the button click, so
-    // dismissing/reopening the modal can't re-roll the wreck.
-    if (result === 'victory') setLootIds(rollLoot(enemy, effDepth, nodeType));
+    // dismissing/reopening the modal can't re-roll the wreck. Victory rolls
+    // each member's full table independently (v0.13 — loot is NOT seat-scaled).
+    if (result === 'victory') setLootIds(enemy.members.flatMap((m) => rollLoot(m, effDepth, nodeType)));
     setConsumedSnapshot({ ...ammoUsedRef.current });
-    syncHud(playerPos.current.distanceTo(enemyPos.current));
+    const refTarget = enemiesRef.current[targetIdxRef.current] ?? enemiesRef.current[0];
+    syncHud(playerPos.current.distanceTo(refTarget.pos));
     setOutcome(result);
   };
 
@@ -468,20 +534,29 @@ export default function BattleScene({ encounter, nodeType = 'patrol', depth, ini
     lastTime.current = now;
     if (dt <= 0 || battleOverRef.current) return;
 
-    // 1. Geometry: distance, bearing, relative angular velocity (real rad/s)
-    const toEnemy = new THREE.Vector3().subVectors(enemyPos.current, playerPos.current);
-    const dist = Math.max(0.001, toEnemy.length()); // km
-    const dirToEnemy = toEnemy.clone().divideScalar(dist);
-    const distMeters = dist * 1000;
+    // 1. Geometry: per-member distance, bearing, relative angular velocity
+    // (real rad/s) — same formulas as ever, cached on each member entry.
+    // webbed resets here and is re-set by the player's web (main target only).
+    enemiesRef.current.forEach((e) => {
+      const toEnemy = new THREE.Vector3().subVectors(e.pos, playerPos.current);
+      e.dist = Math.max(0.001, toEnemy.length()); // km
+      e.dirTo = toEnemy.clone().divideScalar(e.dist);
+      e.distMeters = e.dist * 1000;
+      const relVel = new THREE.Vector3().subVectors(playerVel.current, e.vel);
+      const tangent = new THREE.Vector3().crossVectors(e.dirTo, UP);
+      e.angVel = Math.abs(tangent.dot(relVel)) / Math.max(0.05, e.dist);
+      e.webbed = false;
+    });
+    // The player's single main target — every player module/drone resolves
+    // against this member (FR-4); the HUD distance readout tracks it too.
+    const target = enemiesRef.current[targetIdxRef.current];
+    const dist = target.dist;
 
-    const relVel = new THREE.Vector3().subVectors(playerVel.current, enemyVel.current);
-    const tangent = new THREE.Vector3().crossVectors(dirToEnemy, UP);
-    angularVelocity.current = Math.abs(tangent.dot(relVel)) / Math.max(0.05, dist);
-
-    // 2. Player modules
+    // 2. Player modules — target resolution is the main-target member only
+    // (v0.13 decision 7: web/neut apply to the current main target; switching
+    // targets transfers them). Branch structure and gate order are unchanged.
     let playerMaxSpeed = eff.mobility.base_speed / 1000; // u/s — navigation skill + passive mods already folded into eff
     let playerSigMult = 1; // MWD signature bloom makes the player easier to hit
-    let enemyWebbed = false;
 
     modulesStateRef.current.forEach((mod) => {
       // Reload ticks unconditionally, even while toggled off (v0.11 FR-4) —
@@ -496,7 +571,7 @@ export default function BattleScene({ encounter, nodeType = 'patrol', depth, ini
         playerMaxSpeed *= mod.stats.speed_multiplier;
         playerSigMult *= mod.stats.sig_multiplier || 1;
       }
-      if (mod.type === 'ewar' && distMeters <= mod.stats.optimal) enemyWebbed = true;
+      if (mod.type === 'ewar' && target.distMeters <= mod.stats.optimal) target.webbed = true;
 
       if (mod.timer > 0) {
         mod.timer -= dt;
@@ -504,13 +579,13 @@ export default function BattleScene({ encounter, nodeType = 'patrol', depth, ini
       }
 
       // Missiles hold their cycle (no cap, no log spam) until the target is in range
-      if (mod.type === 'missile_weapon' && distMeters > mod.stats.range) {
+      if (mod.type === 'missile_weapon' && target.distMeters > mod.stats.range) {
         mod.timer = 0.5;
         return;
       }
 
       // Energy neutralizers hold the same way until the target is in range
-      if (mod.type === 'energy_neut' && distMeters > mod.stats.optimal) {
+      if (mod.type === 'energy_neut' && target.distMeters > mod.stats.optimal) {
         mod.timer = 0.5;
         return;
       }
@@ -548,9 +623,9 @@ export default function BattleScene({ encounter, nodeType = 'patrol', depth, ini
         const fireStats = applyAmmoToWeapon(mod.stats, AMMO[mod.ammoId]);
         ammoPoolRef.current[mod.ammoId] = (ammoPoolRef.current[mod.ammoId] ?? 0) - 1;
         ammoUsedRef.current[mod.ammoId] = (ammoUsedRef.current[mod.ammoId] ?? 0) + 1;
-        const quality = rollTurretShot(distMeters, fireStats, enemy.defense.sig_radius, angularVelocity.current);
+        const quality = rollTurretShot(target.distMeters, fireStats, target.def.defense.sig_radius, target.angVel);
         if (quality !== null) {
-          const { dmg } = applyDamage(enemyHp.current, enemy.defense, fireStats.damage, quality * eff.damageMult.hybrid_weapon);
+          const { dmg } = applyDamage(target.hp, target.def.defense, fireStats.damage, quality * eff.damageMult.hybrid_weapon);
           addLog(`[${mod.name}] ${quality === 3.0 ? 'WRECKS' : 'hits'} for ${Math.floor(dmg)} dmg!`);
         } else {
           addLog(`[${mod.name}] Misses!`);
@@ -563,19 +638,19 @@ export default function BattleScene({ encounter, nodeType = 'patrol', depth, ini
         const fireStats = applyAmmoToWeapon(mod.stats, AMMO[mod.ammoId]);
         ammoPoolRef.current[mod.ammoId] = (ammoPoolRef.current[mod.ammoId] ?? 0) - 1;
         ammoUsedRef.current[mod.ammoId] = (ammoUsedRef.current[mod.ammoId] ?? 0) + 1;
-        const factor = missileDamageFactor(enemy.defense.sig_radius, enemyVel.current.length() * 1000, fireStats.explosion_radius, fireStats.explosion_velocity);
-        const { dmg } = applyDamage(enemyHp.current, enemy.defense, fireStats.damage, factor * eff.damageMult.missile_weapon);
+        const factor = missileDamageFactor(target.def.defense.sig_radius, target.vel.length() * 1000, fireStats.explosion_radius, fireStats.explosion_velocity);
+        const { dmg } = applyDamage(target.hp, target.def.defense, fireStats.damage, factor * eff.damageMult.missile_weapon);
         addLog(`[${mod.name}] Hits for ${Math.floor(dmg)} dmg!`);
       } else if (mod.type === 'shield_repair') {
         playerHp.current.shield = Math.min(eff.defense.shield.hp, playerHp.current.shield + mod.stats.shield_bonus);
       } else if (mod.type === 'armor_repair') {
         playerHp.current.armor = Math.min(eff.defense.armor.hp, playerHp.current.armor + mod.stats.armor_bonus);
       } else if (mod.type === 'energy_neut') {
-        // FR-3: the one new module-type branch this version adds. Burns the
-        // enemy's capacitor directly; suppression is read off the same
-        // enemyCapRef by the enemy AI's activation-floor check below.
-        enemyCapRef.current = Math.max(0, enemyCapRef.current - mod.stats.neut_amount);
-        addLog(`[${mod.name}] drains ${mod.stats.neut_amount} GJ from ${enemy.name}'s capacitor!`);
+        // v0.10's one new module-type branch. Burns the main target's
+        // capacitor directly; suppression is read off the same member cap
+        // by that member's activation-floor check below.
+        target.cap = Math.max(0, target.cap - mod.stats.neut_amount);
+        addLog(`[${mod.name}] drains ${mod.stats.neut_amount} GJ from ${target.def.name}'s capacitor!`);
       }
       // 'ewar' and 'propulsion' cycles only pay capacitor; effects applied above
     });
@@ -605,8 +680,10 @@ export default function BattleScene({ encounter, nodeType = 'patrol', depth, ini
 
       // state === 'out': approach at transit speed until inside engage
       // range, then orbit at engage speed (the attack slowdown that makes a
-      // drone hittable at all — docs/balance.md).
-      const toEnemy = new THREE.Vector3().subVectors(enemyPos.current, drone.pos);
+      // drone hittable at all — docs/balance.md). Drones follow the player's
+      // main target (v0.13): these reads go through `target`, so a switch or
+      // death-sweep handoff redirects them next frame with no cached state.
+      const toEnemy = new THREE.Vector3().subVectors(target.pos, drone.pos);
       const dDist = Math.max(0.001, toEnemy.length());
       const dDistMeters = dDist * 1000;
       const dirToEnemy = toEnemy.divideScalar(dDist);
@@ -632,185 +709,218 @@ export default function BattleScene({ encounter, nodeType = 'patrol', depth, ini
       // Same relative-angular-velocity formula as step 1, evaluated between
       // this drone and the enemy — the drone's own hit chance against a
       // target that (unlike drones) doesn't sit still.
-      const relVel = new THREE.Vector3().subVectors(drone.vel, enemyVel.current);
+      const relVel = new THREE.Vector3().subVectors(drone.vel, target.vel);
       const tangent = new THREE.Vector3().crossVectors(dirToEnemy, UP);
       const droneAngVel = Math.abs(tangent.dot(relVel)) / Math.max(0.05, dDist);
-      const quality = rollTurretShot(dDistMeters, drone.def.weapon, enemy.defense.sig_radius, droneAngVel);
+      const quality = rollTurretShot(dDistMeters, drone.def.weapon, target.def.defense.sig_radius, droneAngVel);
       if (quality !== null) {
         // No gunnery/damage-amp multiplier (decision 8): drone damage is
         // panel-as-shot, growth is count and tier, not a percent pipeline.
-        const { dmg } = applyDamage(enemyHp.current, enemy.defense, drone.def.weapon.damage, quality);
+        const { dmg } = applyDamage(target.hp, target.def.defense, drone.def.weapon.damage, quality);
         addLog(`[${drone.def.name}] ${quality === 3.0 ? 'WRECKS' : 'hits'} for ${Math.floor(dmg)} dmg!`);
       } else {
         addLog(`[${drone.def.name}] misses!`);
       }
     });
 
-    if (enemyHp.current.hull <= 0) {
+    // 2.75 Member death sweep (v0.13, the one new stage): runs after player/
+    // drone fire and BEFORE the enemy AI, so a member that dropped this frame
+    // never fires back — same "victory resolves before enemy fire" semantics
+    // as the old single-enemy check that stood in this exact position.
+    enemiesRef.current.forEach((e, i) => {
+      if (!e.alive || e.hp.hull > 0) return;
+      e.alive = false;
+      // Kill lock-in (FR-6): bounty/SP bank into killedRef at death time and
+      // are only written to the store at an outcome confirm button.
+      killedRef.current.isk += e.def.reward;
+      killedRef.current.sp += e.def.spReward;
+      e.aggro.droneIdx = null;
+      addLog(`${e.def.name} breaks apart!`);
+      if (i === targetIdxRef.current) {
+        // Auto-advance the main target to the first surviving member in
+        // seat order (FR-4).
+        const next = enemiesRef.current.findIndex((o) => o.alive);
+        if (next !== -1) {
+          targetIdxRef.current = next;
+          addLog(`Target switched: ${enemiesRef.current[next].def.name}.`);
+        }
+        setForceRender(Date.now());
+      }
+    });
+    if (enemiesRef.current.every((e) => !e.alive)) {
       endBattle('victory');
       return;
     }
 
-    // 3. Enemy AI: orbit the player at preferred range, fire when in range
-    const enemyMaxSpeed = (enemy.mobility.base_speed / 1000) * (enemyWebbed ? 0.5 : 1);
+    // 3. Enemy AI (v0.13: per member — the three blocks below are the v0.12
+    // single-enemy EWAR / aggro bookkeeping / weapon logic moved bodily into
+    // this forEach, internals unchanged; dead members are skipped entirely).
     // MWD signature bloom makes the player both easier to hit and, since it
     // shares the same variable, the reference target for the enemy's own
     // missile factor (FR-1's "MWD bloom applies to missiles too").
     const effectiveSig = eff.defense.sig_radius * playerSigMult;
 
-    // Enemy EWAR (v0.10): pays cap_use every activation_time cycle, gated by
-    // the same activation floor as the weapon below. The web's effect is
-    // still checked every frame by distance — only whether it's *powered*
-    // depends on the cycle/cap check, mirroring the player's own web module.
-    if (enemy.ewar) {
-      enemyEwarTimer.current -= dt;
-      if (enemyEwarTimer.current <= 0) {
-        const ewarCapUse = enemy.ewar.cap_use || 0;
-        const ewarSuppressed = ewarCapUse > 0 && enemy.cap_capacity != null &&
-          enemyCapRef.current < npcActivationFloor(enemy.cap_capacity, ewarCapUse);
-        if (ewarSuppressed) {
-          if (enemyEwarPoweredRef.current) {
-            enemyEwarPoweredRef.current = false;
-            addLog(`${enemy.name}'s electronic warfare systems power down — capacitor drained!`);
+    enemiesRef.current.forEach((m) => {
+      if (!m.alive) return;
+
+      // Enemy EWAR (v0.10): pays cap_use every activation_time cycle, gated by
+      // the same activation floor as the weapon below. The web's effect is
+      // still checked every frame by distance — only whether it's *powered*
+      // depends on the cycle/cap check, mirroring the player's own web module.
+      // Multiple webbers stack multiplicatively (v0.13 decision 8) — the
+      // natural form of this per-member loop.
+      if (m.def.ewar) {
+        m.ewarTimer -= dt;
+        if (m.ewarTimer <= 0) {
+          const ewarCapUse = m.def.ewar.cap_use || 0;
+          const ewarSuppressed = ewarCapUse > 0 && m.def.cap_capacity != null &&
+            m.cap < npcActivationFloor(m.def.cap_capacity, ewarCapUse);
+          if (ewarSuppressed) {
+            if (m.ewarPowered) {
+              m.ewarPowered = false;
+              addLog(`${m.def.name}'s electronic warfare systems power down — capacitor drained!`);
+            }
+            m.ewarTimer = 0.5;
+          } else {
+            if (!m.ewarPowered) {
+              m.ewarPowered = true;
+              addLog(`${m.def.name}'s electronic warfare systems back online.`);
+            }
+            m.ewarTimer = m.def.ewar.activation_time || 5.0;
+            m.cap -= ewarCapUse;
           }
-          enemyEwarTimer.current = 0.5;
-        } else {
-          if (!enemyEwarPoweredRef.current) {
-            enemyEwarPoweredRef.current = true;
-            addLog(`${enemy.name}'s electronic warfare systems back online.`);
-          }
-          enemyEwarTimer.current = enemy.ewar.activation_time || 5.0;
-          enemyCapRef.current -= ewarCapUse;
+        }
+        // Enemy EWAR: their web slows the player inside its envelope
+        if (m.ewarPowered && m.distMeters <= m.def.ewar.optimal) {
+          playerMaxSpeed *= 1 - m.def.ewar.speed_reduction_pct / 100;
         }
       }
-      // Enemy EWAR: their web slows the player inside its envelope
-      if (enemyEwarPoweredRef.current && distMeters <= enemy.ewar.optimal) {
-        playerMaxSpeed *= 1 - enemy.ewar.speed_reduction_pct / 100;
-      }
-    }
 
-    // Enemy fire switching (v0.12, target resolution only — the cap/
-    // activation-floor gates below are untouched, this only decides WHICH
-    // target a shot that clears them is rolled against). Bookkeeping runs
-    // every frame regardless of the weapon's own cooldown.
-    if (enemyAggroRef.current.droneIdx != null) {
-      const target = dronesRef.current[enemyAggroRef.current.droneIdx];
-      enemyAggroRef.current.timer -= dt;
-      if (!target || !target.alive || target.state !== 'out' || enemyAggroRef.current.timer <= 0) {
-        enemyAggroRef.current.droneIdx = null;
-        enemyAggroRef.current.checkTimer = DRONE_AGGRO_PERIOD;
-      }
-    } else {
-      enemyAggroRef.current.checkTimer -= dt;
-      if (enemyAggroRef.current.checkTimer <= 0) {
-        enemyAggroRef.current.checkTimer = DRONE_AGGRO_PERIOD;
-        const outDrones = dronesRef.current.filter((d) => d.alive && d.state === 'out');
-        if (outDrones.length > 0 && Math.random() < DRONE_AGGRO_CHANCE) {
-          const pick = outDrones[Math.floor(Math.random() * outDrones.length)];
-          enemyAggroRef.current.droneIdx = dronesRef.current.indexOf(pick);
-          enemyAggroRef.current.timer = DRONE_AGGRO_DURATION;
-          addLog(`${enemy.name} switches fire to ${pick.def.name}!`);
+      // Enemy fire switching (v0.12, target resolution only — the cap/
+      // activation-floor gates below are untouched, this only decides WHICH
+      // target a shot that clears them is rolled against). Bookkeeping runs
+      // every frame regardless of the weapon's own cooldown; each member
+      // rolls independently (two members may lock the same drone or two
+      // different ones — no coordination, v0.13 non-goal).
+      if (m.aggro.droneIdx != null) {
+        const aggroTarget = dronesRef.current[m.aggro.droneIdx];
+        m.aggro.timer -= dt;
+        if (!aggroTarget || !aggroTarget.alive || aggroTarget.state !== 'out' || m.aggro.timer <= 0) {
+          m.aggro.droneIdx = null;
+          m.aggro.checkTimer = DRONE_AGGRO_PERIOD;
         }
-      }
-    }
-
-    enemyWeaponTimer.current -= dt;
-    if (enemyWeaponTimer.current <= 0) {
-      const weapon = enemy.weapon;
-      const capUse = weapon.stats.cap_use || 0;
-      // Rocket/light-missile NPCs run cap_use 0 (cap-free on both sides, same
-      // as the player's launchers) — they never enter this check, so a neut
-      // build has no weapon-suppression effect against them (FR-2/FR-3).
-      const weaponSuppressed = capUse > 0 && enemy.cap_capacity != null &&
-        enemyCapRef.current < npcActivationFloor(enemy.cap_capacity, capUse);
-
-      if (weaponSuppressed) {
-        if (enemyWeaponPoweredRef.current) {
-          enemyWeaponPoweredRef.current = false;
-          addLog(`${enemy.name}'s weapon systems power down — capacitor drained!`);
-        }
-        enemyWeaponTimer.current = 0.5;
       } else {
-        if (!enemyWeaponPoweredRef.current) {
-          enemyWeaponPoweredRef.current = true;
-          addLog(`${enemy.name}'s weapon systems back online.`);
-        }
-
-        // Target resolution (v0.12): a locked drone substitutes its own
-        // distance/signature/velocity into the exact same formulas below —
-        // no new hit-chance logic, turrets/missiles just aim at a smaller,
-        // faster point in space. Defaults reproduce the pre-v0.12 player-
-        // targeting values byte for byte when no drone is locked.
-        const targetDrone = enemyAggroRef.current.droneIdx != null ? dronesRef.current[enemyAggroRef.current.droneIdx] : null;
-        let tDistMeters = distMeters;
-        let tSig = effectiveSig;
-        let tAngVel = angularVelocity.current;
-        let tSpeed = playerVel.current.length() * 1000;
-        if (targetDrone) {
-          const toTarget = new THREE.Vector3().subVectors(targetDrone.pos, enemyPos.current);
-          const tDist = Math.max(0.001, toTarget.length());
-          tDistMeters = tDist * 1000;
-          tSig = targetDrone.def.sig_radius;
-          const tDir = toTarget.divideScalar(tDist);
-          const tRelVel = new THREE.Vector3().subVectors(targetDrone.vel, enemyVel.current);
-          const tTangent = new THREE.Vector3().crossVectors(tDir, UP);
-          tAngVel = Math.abs(tTangent.dot(tRelVel)) / Math.max(0.05, tDist);
-          tSpeed = targetDrone.vel.length() * 1000;
-        }
-
-        const resolveDroneKill = () => {
-          if (targetDrone.hp.hull <= 0) {
-            targetDrone.alive = false;
-            addLog(`${enemy.name} destroys ${targetDrone.def.name}!`);
-            enemyAggroRef.current.droneIdx = null;
-            enemyAggroRef.current.checkTimer = DRONE_AGGRO_PERIOD;
-            setForceRender(Date.now());
+        m.aggro.checkTimer -= dt;
+        if (m.aggro.checkTimer <= 0) {
+          m.aggro.checkTimer = DRONE_AGGRO_PERIOD;
+          const outDrones = dronesRef.current.filter((d) => d.alive && d.state === 'out');
+          if (outDrones.length > 0 && Math.random() < DRONE_AGGRO_CHANCE) {
+            const pick = outDrones[Math.floor(Math.random() * outDrones.length)];
+            m.aggro.droneIdx = dronesRef.current.indexOf(pick);
+            m.aggro.timer = DRONE_AGGRO_DURATION;
+            addLog(`${m.def.name} switches fire to ${pick.def.name}!`);
           }
-        };
+        }
+      }
 
-        if (weapon.type === 'hybrid_weapon') {
-          // Turrets share the player's hit formula, rolled against the
-          // resolved target's own signature (MWD bloom makes the player
-          // easier to hit; drones use their own fixed sig_radius).
-          if (tDistMeters <= weapon.stats.optimal + 2 * weapon.stats.falloff) {
-            enemyWeaponTimer.current = weapon.stats.rof;
-            enemyCapRef.current -= capUse;
-            const quality = rollTurretShot(tDistMeters, weapon.stats, tSig, tAngVel);
-            if (quality !== null) {
-              if (targetDrone) {
-                const { dmg } = applyDamage(targetDrone.hp, targetDrone.def.defense, weapon.stats.damage, quality);
-                addLog(`${enemy.name} ${quality === 3.0 ? 'WRECKS' : 'hits'} ${targetDrone.def.name} for ${Math.floor(dmg)}!`);
-                resolveDroneKill();
+      m.weaponTimer -= dt;
+      if (m.weaponTimer <= 0) {
+        const weapon = m.def.weapon;
+        const capUse = weapon.stats.cap_use || 0;
+        // Rocket/light-missile NPCs run cap_use 0 (cap-free on both sides, same
+        // as the player's launchers) — they never enter this check, so a neut
+        // build has no weapon-suppression effect against them (FR-2/FR-3).
+        const weaponSuppressed = capUse > 0 && m.def.cap_capacity != null &&
+          m.cap < npcActivationFloor(m.def.cap_capacity, capUse);
+
+        if (weaponSuppressed) {
+          if (m.weaponPowered) {
+            m.weaponPowered = false;
+            addLog(`${m.def.name}'s weapon systems power down — capacitor drained!`);
+          }
+          m.weaponTimer = 0.5;
+        } else {
+          if (!m.weaponPowered) {
+            m.weaponPowered = true;
+            addLog(`${m.def.name}'s weapon systems back online.`);
+          }
+
+          // Target resolution (v0.12): a locked drone substitutes its own
+          // distance/signature/velocity into the exact same formulas below —
+          // no new hit-chance logic, turrets/missiles just aim at a smaller,
+          // faster point in space. Defaults reproduce the pre-v0.12 player-
+          // targeting values byte for byte when no drone is locked.
+          const targetDrone = m.aggro.droneIdx != null ? dronesRef.current[m.aggro.droneIdx] : null;
+          let tDistMeters = m.distMeters;
+          let tSig = effectiveSig;
+          let tAngVel = m.angVel;
+          let tSpeed = playerVel.current.length() * 1000;
+          if (targetDrone) {
+            const toTarget = new THREE.Vector3().subVectors(targetDrone.pos, m.pos);
+            const tDist = Math.max(0.001, toTarget.length());
+            tDistMeters = tDist * 1000;
+            tSig = targetDrone.def.sig_radius;
+            const tDir = toTarget.divideScalar(tDist);
+            const tRelVel = new THREE.Vector3().subVectors(targetDrone.vel, m.vel);
+            const tTangent = new THREE.Vector3().crossVectors(tDir, UP);
+            tAngVel = Math.abs(tTangent.dot(tRelVel)) / Math.max(0.05, tDist);
+            tSpeed = targetDrone.vel.length() * 1000;
+          }
+
+          const resolveDroneKill = () => {
+            if (targetDrone.hp.hull <= 0) {
+              targetDrone.alive = false;
+              addLog(`${m.def.name} destroys ${targetDrone.def.name}!`);
+              m.aggro.droneIdx = null;
+              m.aggro.checkTimer = DRONE_AGGRO_PERIOD;
+              setForceRender(Date.now());
+            }
+          };
+
+          if (weapon.type === 'hybrid_weapon') {
+            // Turrets share the player's hit formula, rolled against the
+            // resolved target's own signature (MWD bloom makes the player
+            // easier to hit; drones use their own fixed sig_radius).
+            if (tDistMeters <= weapon.stats.optimal + 2 * weapon.stats.falloff) {
+              m.weaponTimer = weapon.stats.rof;
+              m.cap -= capUse;
+              const quality = rollTurretShot(tDistMeters, weapon.stats, tSig, tAngVel);
+              if (quality !== null) {
+                if (targetDrone) {
+                  const { dmg } = applyDamage(targetDrone.hp, targetDrone.def.defense, weapon.stats.damage, quality);
+                  addLog(`${m.def.name} ${quality === 3.0 ? 'WRECKS' : 'hits'} ${targetDrone.def.name} for ${Math.floor(dmg)}!`);
+                  resolveDroneKill();
+                } else {
+                  const { dmg, layer } = applyDamage(playerHp.current, eff.defense, weapon.stats.damage, quality);
+                  addLog(`${m.def.name} ${quality === 3.0 ? 'WRECKS' : 'hits'} your ${layer} for ${Math.floor(dmg)}!`);
+                }
               } else {
-                const { dmg, layer } = applyDamage(playerHp.current, eff.defense, weapon.stats.damage, quality);
-                addLog(`${enemy.name} ${quality === 3.0 ? 'WRECKS' : 'hits'} your ${layer} for ${Math.floor(dmg)}!`);
+                addLog(`${m.def.name} misses!`);
               }
             } else {
-              addLog(`${enemy.name} misses!`);
+              m.weaponTimer = 0.5;
+            }
+          } else if (tDistMeters <= weapon.stats.range) {
+            // Missiles always hit inside their range; damage scaled by FR-1's
+            // signature/speed factor (MWD bloom on effectiveSig restores it;
+            // drones use their own fixed sig/speed, no bloom analogue).
+            m.weaponTimer = weapon.stats.rof;
+            m.cap -= capUse;
+            const factor = missileDamageFactor(tSig, tSpeed, weapon.stats.explosion_radius, weapon.stats.explosion_velocity);
+            if (targetDrone) {
+              const { dmg } = applyDamage(targetDrone.hp, targetDrone.def.defense, weapon.stats.damage, factor);
+              addLog(`${m.def.name} hits ${targetDrone.def.name} for ${Math.floor(dmg)}!`);
+              resolveDroneKill();
+            } else {
+              const { dmg, layer } = applyDamage(playerHp.current, eff.defense, weapon.stats.damage, factor);
+              addLog(`${m.def.name} hits your ${layer} for ${Math.floor(dmg)}!`);
             }
           } else {
-            enemyWeaponTimer.current = 0.5;
+            m.weaponTimer = 0.5;
           }
-        } else if (tDistMeters <= weapon.stats.range) {
-          // Missiles always hit inside their range; damage scaled by FR-1's
-          // signature/speed factor (MWD bloom on effectiveSig restores it;
-          // drones use their own fixed sig/speed, no bloom analogue).
-          enemyWeaponTimer.current = weapon.stats.rof;
-          enemyCapRef.current -= capUse;
-          const factor = missileDamageFactor(tSig, tSpeed, weapon.stats.explosion_radius, weapon.stats.explosion_velocity);
-          if (targetDrone) {
-            const { dmg } = applyDamage(targetDrone.hp, targetDrone.def.defense, weapon.stats.damage, factor);
-            addLog(`${enemy.name} hits ${targetDrone.def.name} for ${Math.floor(dmg)}!`);
-            resolveDroneKill();
-          } else {
-            const { dmg, layer } = applyDamage(playerHp.current, eff.defense, weapon.stats.damage, factor);
-            addLog(`${enemy.name} hits your ${layer} for ${Math.floor(dmg)}!`);
-          }
-        } else {
-          enemyWeaponTimer.current = 0.5;
         }
       }
-    }
+    });
 
     if (playerHp.current.hull <= 0) {
       endBattle('defeat');
@@ -828,31 +938,39 @@ export default function BattleScene({ encounter, nodeType = 'patrol', depth, ini
       }
     }
 
-    // 4. Movement: velocity eases toward each command's desired vector (inertia)
-    const desiredPlayer = desiredVelocity(commandRef.current, dirToEnemy, dist, playerMaxSpeed);
+    // 4. Movement: velocity eases toward each command's desired vector
+    // (inertia). Player commands (approach/orbit/keep-range) are relative to
+    // the main target; each member orbits the player at its own orbitRange.
+    const desiredPlayer = desiredVelocity(commandRef.current, target.dirTo, dist, playerMaxSpeed);
     applyInertia(playerVel.current, desiredPlayer, dt, eff.mobility.agility);
     playerPos.current.addScaledVector(playerVel.current, dt);
 
-    const dirToPlayer = dirToEnemy.clone().negate();
-    const desiredEnemy = desiredVelocity({ type: 'orbit', radius: enemy.ai.orbitRange }, dirToPlayer, dist, enemyMaxSpeed);
-    applyInertia(enemyVel.current, desiredEnemy, dt, enemy.mobility.agility);
-    enemyPos.current.addScaledVector(enemyVel.current, dt);
+    enemiesRef.current.forEach((m) => {
+      if (!m.alive) return;
+      const memberMaxSpeed = (m.def.mobility.base_speed / 1000) * (m.webbed ? 0.5 : 1);
+      const dirToPlayer = m.dirTo.clone().negate();
+      const desiredEnemy = desiredVelocity({ type: 'orbit', radius: m.def.ai.orbitRange }, dirToPlayer, m.dist, memberMaxSpeed);
+      applyInertia(m.vel, desiredEnemy, dt, m.def.mobility.agility);
+      m.pos.addScaledVector(m.vel, dt);
+      if (m.vel.lengthSq() > 1e-6) m.rot = Math.atan2(m.vel.x, m.vel.z);
+    });
 
     if (playerVel.current.lengthSq() > 1e-6) playerRot.current = Math.atan2(playerVel.current.x, playerVel.current.z);
-    if (enemyVel.current.lengthSq() > 1e-6) enemyRot.current = Math.atan2(enemyVel.current.x, enemyVel.current.z);
 
     // 5. Capacitor Recharge
     const capMax = eff.resources.cap_capacity;
     capRef.current = Math.min(capMax, capRef.current + getCapacitorRecharge(capRef.current, capMax, eff.resources.cap_recharge, dt));
 
     // Enemy capacitor (v0.10) — skipped entirely for the Infinity fallback
-    // (an NPC without cap fields), same recharge curve as the player's.
-    if (enemy.cap_capacity != null) {
-      enemyCapRef.current = Math.min(
-        enemy.cap_capacity,
-        enemyCapRef.current + getCapacitorRecharge(enemyCapRef.current, enemy.cap_capacity, enemy.cap_recharge, dt)
+    // (an NPC without cap fields), same recharge curve as the player's,
+    // per member (v0.13: a neuted member's suppression never affects its wing).
+    enemiesRef.current.forEach((m) => {
+      if (!m.alive || m.def.cap_capacity == null) return;
+      m.cap = Math.min(
+        m.def.cap_capacity,
+        m.cap + getCapacitorRecharge(m.cap, m.def.cap_capacity, m.def.cap_recharge, dt)
       );
-    }
+    });
 
     // 6. Sync UI a few times per second
     hudAccumulator.current += dt;
@@ -890,7 +1008,24 @@ export default function BattleScene({ encounter, nodeType = 'patrol', depth, ini
         <Grid position={[0, -1, 0]} args={[100, 100]} cellSize={1} cellColor="#1e283c" sectionSize={5} sectionColor="#2a3f5f" fadeDistance={60} />
 
         {outcome !== 'defeat' && <ShipMesh positionRef={playerPos} rotationRef={playerRot} color="#5a6b7c" isPlayer={true} />}
-        {outcome !== 'victory' && <ShipMesh positionRef={enemyPos} rotationRef={enemyRot} color="#3a2b2c" isPlayer={false} />}
+        {enemiesRef.current.map((m, i) => (
+          m.alive ? (
+            <ShipMesh
+              key={i}
+              positionRef={{ current: m.pos }}
+              rotationRef={{ current: m.rot }}
+              color="#3a2b2c"
+              isPlayer={false}
+              onClick={(e) => { e.stopPropagation(); setTarget(i); }}
+            />
+          ) : null
+        ))}
+        {/* Main-target ring (v0.13, presentation only — the HUD member list
+            is the guaranteed target-switching path). Hidden for solo fights
+            so a single-member battle stays visually identical to v0.12. */}
+        {enemy.size > 1 && outcome === null && enemiesRef.current[targetIdxRef.current]?.alive && (
+          <TargetRing positionRef={{ current: enemiesRef.current[targetIdxRef.current].pos }} />
+        )}
         {dronesRef.current.map((drone, i) => (
           drone.alive && drone.state !== 'bay'
             ? <DroneMesh key={i} positionRef={{ current: drone.pos }} color={droneColor(drone.def)} />
@@ -904,7 +1039,7 @@ export default function BattleScene({ encounter, nodeType = 'patrol', depth, ini
         <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)', background: 'rgba(10,15,25,0.95)', border: '1px solid #2cd67c', padding: '3rem', borderRadius: '8px', zIndex: 100, textAlign: 'center', boxShadow: '0 0 50px rgba(44, 214, 124, 0.2)' }}>
           <h2 style={{ color: '#2cd67c', fontSize: '2rem', marginBottom: '1rem', fontFamily: 'var(--font-display)' }}>TARGET DESTROYED</h2>
           <p style={{ color: 'var(--color-text-muted)', marginBottom: '1rem' }}>
-            The {enemy.name} breaks apart. Bounty: {enemy.reward.toLocaleString()} ISK · <span style={{ color: '#e8a838' }}>+{enemy.spReward.toLocaleString()} SP</span>
+            {enemy.size > 1 ? 'The hostile formation breaks apart.' : `The ${enemy.members[0].name} breaks apart.`} Bounty: {enemy.reward.toLocaleString()} ISK · <span style={{ color: '#e8a838' }}>+{enemy.spReward.toLocaleString()} SP</span>
           </p>
           <div style={{ textAlign: 'left', minWidth: '260px', marginBottom: '1rem' }}>
             {lootIds.length === 0 ? (
@@ -990,6 +1125,12 @@ export default function BattleScene({ encounter, nodeType = 'patrol', depth, ini
           <p style={{ color: 'var(--color-text-muted)', marginBottom: '1rem', maxWidth: '380px' }}>
             Engagement abandoned. Bounty, SP and salvage forfeited; the site is lost for this dive.
           </p>
+          {killedRef.current.isk > 0 && (
+            <p style={{ color: '#2cd67c', fontSize: '0.75rem', marginBottom: '1rem' }}>
+              Destroyed before warp-out: {enemiesRef.current.filter((e) => !e.alive).length} of {enemy.size} —{' '}
+              +{killedRef.current.isk.toLocaleString()} ISK · +{killedRef.current.sp.toLocaleString()} SP (banked)
+            </p>
+          )}
           {Object.keys(consumedSnapshot).length > 0 && (
             <p style={{ color: 'var(--color-text-muted)', fontSize: '0.7rem', marginBottom: '1rem' }}>
               Expended: {Object.entries(consumedSnapshot).map(([id, qty]) => `${qty}× ${AMMO[id]?.name ?? id}`).join(' · ')}
@@ -1004,6 +1145,13 @@ export default function BattleScene({ encounter, nodeType = 'patrol', depth, ini
           )}
           <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center' }}>
             <button onClick={() => {
+              // Kill lock-in (v0.13 FR-6): destroyed members' bounty/SP bank
+              // at the retreat confirm — the one authorized widening of the
+              // v0.9 "retreat writes nothing" rule beyond ammo/drones.
+              if (killedRef.current.isk > 0) {
+                addIsk(killedRef.current.isk);
+                addSp(killedRef.current.sp);
+              }
               settleBattleAmmo({ consumed: ammoUsedRef.current, assignments: buildAmmoAssignments() });
               settleBattleDrones({ lost: dronesRef.current.filter((d) => !d.alive).map((d) => d.droneId) });
               onRetreat({ ...playerHp.current });
@@ -1117,14 +1265,43 @@ export default function BattleScene({ encounter, nodeType = 'patrol', depth, ini
             <HudBar label="Capacitor" value={playerHud.cap} max={eff.resources.cap_capacity} color="#e8a838" />
           </div>
         </div>
-        <div style={{ background: 'rgba(0,0,0,0.8)', border: '1px solid rgba(255,74,74,0.5)', padding: '1rem', borderRadius: '8px', width: '320px', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-          <h3 style={{ color: '#ff4a4a', fontSize: '1rem', marginBottom: '0.25rem' }}>{enemy.name}</h3>
-          <HudBar label="Shield" value={enemyHud.shield} max={enemy.defense.shield.hp} color="var(--color-shield)" />
-          <HudBar label="Armor" value={enemyHud.armor} max={enemy.defense.armor.hp} color="var(--color-armor)" />
-          <HudBar label="Structure" value={enemyHud.hull} max={enemy.defense.hull.hp} color="var(--color-hull)" />
-          {enemy.cap_capacity != null && (
-            <HudBar label="Capacitor" value={enemyHud.cap} max={enemy.cap_capacity} color="#e8a838" />
-          )}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+          {/* Enemy member cards (v0.13) — one per formation member. A solo
+              fight renders no target outline or pointer cursor, keeping its
+              visuals equivalent to the pre-v0.13 single panel. */}
+          {enemy.members.map((memberDef, i) => {
+            const hud = enemyHud[i] ?? { shield: 0, armor: 0, hull: 0, cap: null, alive: true };
+            const isTarget = enemy.size > 1 && targetIdxRef.current === i && hud.alive && outcome === null;
+            const clickable = enemy.size > 1 && hud.alive && outcome === null;
+            return (
+              <div
+                key={i}
+                onClick={clickable ? () => setTarget(i) : undefined}
+                style={{
+                  background: 'rgba(0,0,0,0.8)',
+                  border: isTarget ? '1px solid #4deeea' : '1px solid rgba(255,74,74,0.5)',
+                  boxShadow: isTarget ? '0 0 10px rgba(77,238,234,0.35)' : 'none',
+                  padding: '1rem', borderRadius: '8px', width: '320px',
+                  display: 'flex', flexDirection: 'column', gap: '0.5rem',
+                  opacity: hud.alive ? 1 : 0.45,
+                  cursor: clickable ? 'pointer' : 'default'
+                }}>
+                <h3 style={{ color: hud.alive ? '#ff4a4a' : 'var(--color-text-muted)', fontSize: '1rem', marginBottom: '0.25rem' }}>
+                  {memberDef.name}{!hud.alive && <span style={{ float: 'right' }}>✕</span>}
+                </h3>
+                {hud.alive && (
+                  <>
+                    <HudBar label="Shield" value={hud.shield} max={memberDef.defense.shield.hp} color="var(--color-shield)" />
+                    <HudBar label="Armor" value={hud.armor} max={memberDef.defense.armor.hp} color="var(--color-armor)" />
+                    <HudBar label="Structure" value={hud.hull} max={memberDef.defense.hull.hp} color="var(--color-hull)" />
+                    {memberDef.cap_capacity != null && hud.cap != null && (
+                      <HudBar label="Capacitor" value={hud.cap} max={memberDef.cap_capacity} color="#e8a838" />
+                    )}
+                  </>
+                )}
+              </div>
+            );
+          })}
         </div>
       </div>
     </div>

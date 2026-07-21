@@ -12,6 +12,7 @@ export const NPCS = {
     name: 'Guristas Pirate',
     class: 'Frigate',
     faction: 'Guristas',
+    role: 'dps', // v0.13: group seat 1 eligibility (support = cover/EWAR seats 2–3 only)
     defense: {
       shield: { hp: 220, em: 35, th: 35, kin: 5, exp: 40 },
       armor: { hp: 160, em: 30, th: 30, kin: 5, exp: 30 },
@@ -57,6 +58,7 @@ export const NPCS = {
     name: 'Serpentis Brawler',
     class: 'Frigate',
     faction: 'Serpentis',
+    role: 'dps',
     defense: {
       shield: { hp: 180, em: 35, th: 5, kin: 35, exp: 40 },
       armor: { hp: 280, em: 30, th: 5, kin: 30, exp: 30 },
@@ -103,6 +105,7 @@ export const NPCS = {
     name: 'Guristas Sniper',
     class: 'Frigate',
     faction: 'Guristas',
+    role: 'support', // long-range cover position (orbitRange 15 km)
     defense: {
       shield: { hp: 280, em: 35, th: 35, kin: 5, exp: 40 },
       armor: { hp: 140, em: 30, th: 30, kin: 5, exp: 30 },
@@ -148,6 +151,7 @@ export const NPCS = {
     name: 'Angel Webber',
     class: 'Frigate',
     faction: 'Angel Cartel',
+    role: 'support', // ewar block
     defense: {
       shield: { hp: 200, em: 35, th: 35, kin: 40, exp: 10 },
       armor: { hp: 200, em: 35, th: 30, kin: 30, exp: 5 },
@@ -198,6 +202,7 @@ export const NPCS = {
     name: 'Sansha Slaver',
     class: 'Frigate',
     faction: "Sansha's Nation",
+    role: 'dps',
     defense: {
       shield: { hp: 210, em: 5, th: 30, kin: 35, exp: 40 },
       armor: { hp: 190, em: 5, th: 30, kin: 30, exp: 30 },
@@ -243,6 +248,7 @@ export const NPCS = {
     name: 'Sansha Ravager',
     class: 'Frigate',
     faction: "Sansha's Nation",
+    role: 'dps',
     defense: {
       shield: { hp: 200, em: 5, th: 30, kin: 35, exp: 40 },
       armor: { hp: 260, em: 5, th: 30, kin: 30, exp: 30 },
@@ -287,6 +293,7 @@ export const NPCS = {
     name: 'Serpentis Scout',
     class: 'Frigate',
     faction: 'Serpentis',
+    role: 'support', // ewar block
     defense: {
       shield: { hp: 190, em: 35, th: 5, kin: 35, exp: 40 },
       armor: { hp: 200, em: 30, th: 5, kin: 30, exp: 30 },
@@ -337,6 +344,7 @@ export const NPCS = {
     name: 'Angel Hunter',
     class: 'Frigate',
     faction: 'Angel Cartel',
+    role: 'dps',
     defense: {
       shield: { hp: 190, em: 35, th: 35, kin: 40, exp: 10 },
       armor: { hp: 190, em: 35, th: 30, kin: 30, exp: 5 },
@@ -385,6 +393,7 @@ export const NPCS = {
     name: 'Rogue Drone Alvi',
     class: 'Frigate',
     faction: 'Rogue Drones',
+    role: 'dps',
     defense: {
       shield: { hp: 200, em: 5, th: 30, kin: 35, exp: 40 },
       armor: { hp: 210, em: 5, th: 30, kin: 30, exp: 30 },
@@ -431,6 +440,7 @@ export const NPCS = {
     name: 'Rogue Drone Alvum',
     class: 'Frigate',
     faction: 'Rogue Drones',
+    role: 'dps',
     defense: {
       shield: { hp: 260, em: 5, th: 30, kin: 35, exp: 40 },
       armor: { hp: 240, em: 5, th: 30, kin: 30, exp: 30 },
@@ -493,9 +503,42 @@ export function availableNpcs(depth) {
   return ENCOUNTER_UNLOCKS.filter((u) => depth >= u.depth).map((u) => NPCS[u.npc]);
 }
 
+// Group size tiers and occurrence weights (v0.13 — docs/balance.md "Enemy
+// groups"). d1–5 is always a single enemy and consumes zero rng (a
+// deterministic conclusion is not rolled); unlock depths align with segment
+// starts (1/6/11…) so each new band is a readable encounter-shape jump.
+export const GROUP_SIZE_TABLE = [
+  { minDepth: 11, weights: [[1, 0.65], [2, 0.20], [3, 0.15]] },
+  { minDepth: 6,  weights: [[1, 0.70], [2, 0.30]] },
+  { minDepth: 1,  weights: [[1, 1.0]] }
+];
+
+// Seat coefficient: multiplied into member HP/damage/bounty/SP (EWAR strength
+// and capacitor are never scaled — the standing "EWAR strength is not scaled"
+// rule extended).
+export const SEAT_MULTS = { 1: 1.0, 2: 0.65, 3: 0.5 };
+
+// Rolls the encounter's group size for a depth. d<6 returns 1 without
+// touching rng, so the d1–5 seed stream is byte-identical to v0.12.
+export function rollGroupSize(depth, rng = Math.random) {
+  const tier = GROUP_SIZE_TABLE.find((t) => depth >= t.minDepth);
+  if (!tier || tier.weights.length === 1) return tier ? tier.weights[0][0] : 1;
+  let roll = rng();
+  for (const [size, weight] of tier.weights) {
+    roll -= weight;
+    if (roll < 0) return size;
+  }
+  return tier.weights[tier.weights.length - 1][0]; // floating-point guard
+}
+
 // Weighted pick among the depth-unlocked pool. rng is injectable for tests.
-export function pickWeightedNpc(depth, rng = Math.random) {
-  const pool = ENCOUNTER_UNLOCKS.filter((u) => depth >= u.depth);
+// role (v0.13, backwards-compatible third parameter): 'dps' filters the pool
+// to dps-role archetypes — used for a multi-member group's seat 1; solo
+// encounters and seats 2–3 pass null (full pool, support ships included).
+export function pickWeightedNpc(depth, rng = Math.random, role = null) {
+  const pool = ENCOUNTER_UNLOCKS.filter(
+    (u) => depth >= u.depth && (role == null || NPCS[u.npc].role === role)
+  );
   const totalWeight = pool.reduce((sum, u) => sum + u.weight, 0);
   let roll = rng() * totalWeight;
   for (const u of pool) {
@@ -507,10 +550,12 @@ export function pickWeightedNpc(depth, rng = Math.random) {
 
 // Scales an NPC for a given deadspace depth and map node type.
 // Depth raises HP and damage; elite nodes are tougher but pay double.
-// EWAR strength is deliberately not scaled.
-export function buildEncounter(npc, depth, nodeType = 'patrol') {
+// EWAR strength is deliberately not scaled. seatMult (v0.13) is the group
+// seat coefficient (SEAT_MULTS) applied to HP/damage/reward/SP per member —
+// seatMult 1 reproduces the v0.12 output byte for byte.
+export function buildEncounter(npc, depth, nodeType = 'patrol', seatMult = 1) {
   const depthMult = 1 + 0.15 * (depth - 1);
-  const statMult = depthMult * (nodeType === 'elite' ? 1.5 : 1);
+  const statMult = depthMult * (nodeType === 'elite' ? 1.5 : 1) * seatMult;
 
   const scaleLayer = (layer) => ({ ...layer, hp: Math.round(layer.hp * statMult) });
   const scaleDamage = (damage) =>
@@ -529,14 +574,30 @@ export function buildEncounter(npc, depth, nodeType = 'patrol') {
       ...npc.weapon,
       stats: { ...npc.weapon.stats, damage: scaleDamage(npc.weapon.stats.damage) }
     },
-    reward: Math.round(npc.baseReward * depthMult * (nodeType === 'elite' ? 2 : 1)),
-    spReward: Math.round(SP_REWARD_BASE * depthMult * (nodeType === 'elite' ? 2 : 1))
+    reward: Math.round(npc.baseReward * depthMult * (nodeType === 'elite' ? 2 : 1) * seatMult),
+    spReward: Math.round(SP_REWARD_BASE * depthMult * (nodeType === 'elite' ? 2 : 1) * seatMult)
   };
 }
 
 // Random encounter from the depth-unlocked pool, weighted by archetype.
-// rng is injectable for tests.
+// rng is injectable for tests. v0.13: returns a group aggregate
+// { members, size, reward, spReward } — reward/spReward are member sums.
+// rng order is a locked protocol: ① size (d≥6 only — d1–5 consumes zero)
+// ② seat 1 (dps sub-pool for multi groups, FULL pool for solos — support
+// ships still appear alone, preserving the v0.12 solo distribution)
+// ③④ seats 2/3 (full pool; duplicates and mixed factions allowed).
 export function rollEncounter(depth, nodeType = 'patrol', rng = Math.random) {
-  const npc = pickWeightedNpc(depth, rng);
-  return buildEncounter(npc, depth, nodeType);
+  const size = rollGroupSize(depth, rng);
+  const seatMult = SEAT_MULTS[size];
+  const members = [];
+  for (let i = 0; i < size; i++) {
+    const npc = pickWeightedNpc(depth, rng, i === 0 && size > 1 ? 'dps' : null);
+    members.push(buildEncounter(npc, depth, nodeType, seatMult));
+  }
+  return {
+    members,
+    size,
+    reward: members.reduce((sum, m) => sum + m.reward, 0),
+    spReward: members.reduce((sum, m) => sum + m.spReward, 0)
+  };
 }

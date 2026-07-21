@@ -287,6 +287,57 @@ retroactively changed" rule below — everything else still holds.
   in-space drones with the hull while hangar stock (droneHangar) survives;
   a mid-battle refresh, as ever, settles nothing.
 
+## Enemy groups (new in v0.13)
+
+- Group size is the second depth axis (the first is depthMult): d1–5 always
+  single (zero change to the current band, and zero rng consumed by the size
+  roll there); d6–10 unlock doubles at 30%; d11+ unlock triples at 15% with
+  doubles at 20% (multi-share 35%). Unlock depths align with segment starts
+  (1/6/11): each new segment band is a readable encounter-shape jump. The
+  roll order inside rollEncounter is a locked protocol: size → seat 1 →
+  seat 2 → seat 3.
+- Seat coefficient (SEAT_MULTS, src/data/npcs.js): 1.0 solo / 0.65 each in a
+  double / 0.5 each in a triple — multiplied into member HP, damage, bounty
+  and SP (never into EWAR strength or capacitor, which stay unscaled by the
+  standing rule). Totals: a double is ≈1.30× a same-depth solo in HP, DPS,
+  bounty and SP; a triple ≈1.50×. Red line: group total nominal DPS ≤ 1.5×
+  the strongest same-depth solo — the worst triple (3× Brawler at 0.5) sits
+  exactly on it by construction. Tuning lever: seat coefficients only
+  (occurrence weights are the frequency knob, kept independent).
+- Composition: seat 1 is always a dps-role NPC (role field, src/data/npcs.js:
+  support = Guristas Sniper, Angel Webber, Serpentis Scout); seats 2–3 draw
+  from the full unlocked pool, duplicates and mixed factions allowed. Solo
+  encounters draw from the FULL pool (support ships still appear alone —
+  anything else would break the v0.12 zero-regression baseline). Multiple
+  webs stack multiplicatively on the player (2× 45–50% ≈ ×0.27 speed); the
+  player's own web/neut apply to the current main target only.
+- Member first volleys are staggered 0.5 s apart (weaponTimer 1.5 + 0.5×i)
+  to avoid a triple alpha-sync on entry; a solo member keeps the exact 1.5 s
+  grace of v0.12.
+- Rewards and salvage: group bounty/SP = seat-scaled member sum (the 1.3×/
+  1.5× totals above). Loot is NOT seat-scaled: victory rolls each member's
+  full table independently (a double patrol carries ~0.70–0.90 expected
+  module drops vs the solo 0.35–0.45 band) — an intentional salvage premium
+  priced by the all-or-nothing rule below. Watch item: if multi-node farming
+  dominates, the recorded (not installed) valve is scaling loot chances by
+  the seat coefficient.
+- Retreat partial settlement (the one authorized widening of the v0.9
+  retreat rule, third revision): members destroyed before warp-out bank
+  their bounty/SP at the retreat confirm (killedRef), alongside the ammo/
+  drone settlement. Loot still requires full clear; defeat forfeits
+  everything including killed-member bounties; a mid-battle refresh, as
+  ever, settles nothing. Fallback valve (recorded, not enabled): ×0.5 on
+  banked partial bounties if retreat rates spike.
+- Drone attrition on multi nodes: each member rolls fire-switching
+  independently (25%/6 s each), so expected redirect windows scale with
+  size while per-window damage carries the seat coefficient — net drone
+  loss ≈ ×1.3 on doubles, in step with total group strength; no DRONE_*
+  constant changes.
+- Emergent composition teaching (no bespoke logic): killing a webber
+  restores player speed and collapses a covering Sniper's hit chance from
+  ≈60% (webbed orbit) to ≈13% (free orbit at 5 km/315 m/s) — kill-order
+  choice falls out of calculateHitChance unchanged.
+
 ## Skill defaults
 
 Two different skill families, two different starting levels:
